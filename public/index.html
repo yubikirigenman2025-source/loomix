@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Loomix - 国産SNS統合タイムライン</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🧵</text></svg>">
+</head>
+<body>
+  <div class="app-container">
+    <!-- Header -->
+    <header class="app-header">
+      <div class="header-left">
+        <div class="logo">
+          <span class="logo-icon">🧵</span>
+          <span class="logo-text">Loomix</span>
+          <span class="logo-tag">MVP v0.1</span>
+        </div>
+        <p class="tagline">国産SNSのタイムラインを、ひとつに織り交ぜる。</p>
+      </div>
+      <div class="header-actions">
+        <label class="auto-refresh-toggle" title="30秒ごとに自動更新">
+          <input type="checkbox" id="autoRefresh" checked>
+          <span class="toggle-slider"></span>
+          <span class="toggle-label">自動更新</span>
+        </label>
+        <button id="refreshBtn" class="btn-refresh" title="タイムラインを再読み込み">
+          <span class="refresh-icon">🔄</span>
+          <span class="btn-text">更新</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- Service Filters -->
+    <nav class="service-nav">
+      <div class="filter-chips">
+        <button class="chip active" data-service="all">
+          <span class="chip-icon">🌐</span>
+          <span class="chip-label">すべて</span>
+          <span class="chip-badge" id="badge-all">0</span>
+        </button>
+        <button class="chip" data-service="karotter">
+          <span class="chip-icon">🥕</span>
+          <span class="chip-label">Karotter</span>
+          <span class="chip-badge" id="badge-karotter">0</span>
+        </button>
+        <button class="chip" data-service="yudetter">
+          <span class="chip-icon">🥚</span>
+          <span class="chip-label">Yudetter</span>
+          <span class="chip-badge" id="badge-yudetter">0</span>
+        </button>
+        <button class="chip" data-service="amehare">
+          <span class="chip-icon">☀️</span>
+          <span class="chip-label">あめ→はれ</span>
+          <span class="chip-badge" id="badge-amehare">0</span>
+        </button>
+        <button class="chip" data-service="pitter">
+          <span class="chip-icon">🕊️</span>
+          <span class="chip-label">Pitter</span>
+          <span class="chip-badge" id="badge-pitter">0</span>
+        </button>
+      </div>
+      <div class="status-bar">
+        <span id="lastUpdated" class="last-updated">取得中...</span>
+      </div>
+    </nav>
+
+    <!-- Main Content -->
+    <main class="timeline-container">
+      <div id="loading" class="loading-state">
+        <div class="spinner"></div>
+        <p>4つのSNSからタイムラインを織り交ぜています...</p>
+      </div>
+
+      <div id="error" class="error-state" style="display: none;">
+        <span class="error-icon">⚠️</span>
+        <p id="errorMsg">データの取得に失敗しました。</p>
+        <button class="btn-retry" onclick="fetchTimeline(true)">再試行</button>
+      </div>
+
+      <div id="timeline" class="timeline-feed" style="display: none;">
+        <!-- Posts will be injected here -->
+      </div>
+    </main>
+
+    <!-- Footer -->
+    <footer class="app-footer">
+      <p>Loomix &copy; 2026 · 国産SNS統合クライアント プロジェクト</p>
+      <div class="connected-services">
+        <span class="service-dot dot-karotter">Karotter</span>
+        <span class="service-dot dot-yudetter">Yudetter</span>
+        <span class="service-dot dot-amehare">あめ→はれ</span>
+        <span class="service-dot dot-pitter">Pitter</span>
+      </div>
+    </footer>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

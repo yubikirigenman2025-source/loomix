@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+*.sh
+amhr/
+amiverse/
+karotter/
+pitter/
+yudetter/
+misc/
+test_fetch.py
