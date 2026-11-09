@@ -120,7 +120,6 @@ function countsMarkup(post) {
   if (m.likes) parts.push(`<span><span class="num">${num(m.likes)}</span> いいね</span>`);
   if (m.reposts) parts.push(`<span><span class="num">${num(m.reposts)}</span> リポスト</span>`);
   if (m.replies) parts.push(`<span><span class="num">${num(m.replies)}</span> 返信</span>`);
-  if (!parts.length && m.views) parts.push(`<span><span class="num">${num(m.views)}</span> 表示</span>`);
   return `<div class="counts">${parts.join("")}</div>`;
 }
 

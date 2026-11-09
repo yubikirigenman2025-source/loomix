@@ -57,15 +57,22 @@ a { color: inherit; }
   top: 0;
   z-index: 30;
   height: 48px;
+  display: flex;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.88);
+  -webkit-backdrop-filter: saturate(140%) blur(10px);
+  backdrop-filter: saturate(140%) blur(10px);
+  border-bottom: 1px solid var(--line);
+}
+
+.top-inner {
+  width: 100%;
+  max-width: var(--width);
   padding: 0 16px;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  background: rgba(0, 0, 0, 0.88);
-  -webkit-backdrop-filter: saturate(140%) blur(10px);
-  backdrop-filter: saturate(140%) blur(10px);
-  border-bottom: 1px solid var(--line);
 }
 
 .brand { display: flex; align-items: baseline; gap: 7px; }
@@ -159,13 +166,20 @@ a { color: inherit; }
   top: 48px;
   z-index: 25;
   display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 0 10px 0 6px;
+  justify-content: center;
   background: rgba(0, 0, 0, 0.92);
   -webkit-backdrop-filter: blur(10px);
   backdrop-filter: blur(10px);
   border-bottom: 1px solid var(--line);
+}
+
+.filters-inner {
+  width: 100%;
+  max-width: var(--width);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 10px 0 6px;
 }
 
 .filter-scroll {
@@ -429,6 +443,14 @@ a { color: inherit; }
 
 .foot {
   border-top: 1px solid var(--line-soft);
+  padding: 0;
+  display: flex;
+  justify-content: center;
+}
+
+.foot-inner {
+  width: 100%;
+  max-width: var(--width);
   padding: 12px 16px;
   display: flex;
   justify-content: space-between;
