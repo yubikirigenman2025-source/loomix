@@ -1,90 +1,125 @@
-# Loomix (ルーミックス) 🧵
+# Loomix (ルーミックス)
 
-国産SNS（Karotter / Yudetter / あめ→はれ / Pitter）の公開タイムラインをひとつに織り交ぜる、統合クライアント・リーダー（Step 1 MVP）。
+Karotter / Yudetter / あめ→はれ / Pitter の公開タイムラインを、ひとつの流れに織り交ぜるリーダー。
 
-## 特徴
+- 本番: https://loomix-z8wt.onrender.com
+- リポジトリ: https://github.com/yubikirigenman2025-source/loomix
 
-- **4大国産SNSのタイムラインを時系列マージ**：
-  - 🥕 **Karotter**（おすすめ・最新カロート）
-  - 🥚 **Yudetter**（最新ユデート）
-  - ☀️ **あめ→はれ**（最新投稿）
-  - 🕊️ **Pitter**（最新ピット）
-- **CORS回避のBFFアーキテクチャ**：各サービスのCORS制限を解決する軽量プロキシサーバーを内蔵。
-- **並列フェッチ＆キャッシュ**：4つのサービスをマルチスレッドで並列取得し、キャッシュ（20秒）により高速応答＆相手先サーバーへの負荷を最小化。
-- **レスポンシブなモダンWebUI**：
-  - 各SNSごとのブランドカラー・アイコンバッジ
-  - サービス別絞り込みタブ（すべて / 各SNS）
-  - 投稿画像グリッド表示＆本文リンク自動化
-  - 30秒ごとの自動更新トグル
+## v0.2 の変更
 
-## 起動方法
+- **取得深度を拡大**：karotter 100 / yudetter 100 / am-hr 80 / pitter 80 件（各サービスのカーソルでページを継ぎ足し）を取得し、UTC の深い時系列マージで表示。1回の更新で最大360件。
+- **静かなモノクロUI**：背景 #000、罫線 #1b1b1b の1pxのみ、絵文字・ブランドカラー・グラデーションを廃止。サービスの区別は小さなテキストバッジ（`KAROTTER` / `YUDETTER` / `AM-HR` / `PITTER`）で表現。
+- **サイト内プロフィール**：名前・アイコンを押すとスライドオーバーで、アイコン・名前・ID・サービス・bio・投稿数などの統計・直近20投稿を表示。元サービスへ出る導線も併設。
+- **画像ライトボックス**：画像タップで全画面表示、複数枚は ‹ › とキーボードで移動。
+- **返信の判別と除外**：返信には「返信 @相手」を表示し、「返信を除外」トグルで単体投稿のみに。
+- **カード全体タップ**：カードのどこを押しても本家投稿（プロフィール）を開く。テキスト選択中は開かない。
+- **軽量化**：gzip 応答（約236KB → 約36KB）、40件ずつの段階描画、60秒キャッシュ＋stale-while-revalidate（古いキャッシュを即返し、裏で1回だけ更新）。
 
-### ローカル起動
+## 起動
 
 ```bash
-# 依存パッケージなし（Python 3.8+ 標準ライブラリのみで動作）
-python3 server.py
-```
-
-ブラウザで `http://localhost:8080` を開きます。
-
-環境変数 `PORT` でポート番号を変更可能です：
-```bash
+python3 server.py          # http://localhost:8080
 PORT=3000 python3 server.py
 ```
 
-## API仕様
+依存パッケージなし（Python 3.8+ 標準ライブラリのみ）。Docker（`Dockerfile`）と Vercel（`vercel.json` / `api/index.py`）にも対応。
 
-- `GET /api/timeline`
-  - クエリパラメータ：
-    - `service`: `all`（デフォルト） | `karotter` | `yudetter` | `amehare` | `pitter`
-    - `refresh`: `1`（キャッシュを無視して強制取得）
-  - レスポンス：
-    ```json
+## API
+
+### `GET /api/timeline`
+
+| パラメータ | 内容 |
+|---|---|
+| `service` | `all`（既定）/ `karotter` / `yudetter` / `amehare` / `pitter` |
+| `refresh` | `1` でキャッシュを無視して再取得 |
+
+```json
+{
+  "ok": true,
+  "fetchedAt": "2026-11-09T20:04:10.000Z",
+  "total": 360,
+  "allTotal": 360,
+  "serviceCounts": { "karotter": 100, "yudetter": 100, "amehare": 80, "pitter": 80 },
+  "errors": {},
+  "services": [ { "id": "karotter", "name": "Karotter", "label": "karotter", "url": "https://karotter.com" } ],
+  "posts": [
     {
-      "ok": true,
-      "fetchedAt": "2026-11-09T09:15:00.000Z",
-      "total": 80,
-      "serviceCounts": {
-        "karotter": 20,
-        "yudetter": 20,
-        "amehare": 20,
-        "pitter": 20
+      "id": "karotter_2120795",
+      "service": "karotter",
+      "serviceName": "Karotter",
+      "serviceLabel": "karotter",
+      "author": {
+        "id": "Sophie_twilight",
+        "username": "Sophie_twilight",
+        "displayName": "ソフィー・トワイライト",
+        "avatarUrl": "https://karotter.com/uploads/avatars/...webp",
+        "profileUrl": "https://karotter.com/Sophie_twilight"
       },
-      "posts": [
-        {
-          "id": "karotter_2118129",
-          "service": "karotter",
-          "serviceName": "Karotter",
-          "serviceIcon": "🥕",
-          "badgeColor": "#f97316",
-          "author": {
-            "username": "daily_reishou",
-            "displayName": "デイリー冷笑",
-            "avatarUrl": "https://karotter.com/uploads/avatars/...",
-            "profileUrl": "https://karotter.com/daily_reishou"
-          },
-          "content": "投稿本文...",
-          "media": [],
-          "createdAt": "2026-11-09T09:12:24.673Z",
-          "url": "https://karotter.com/daily_reishou/status/p_2118129",
-          "metrics": { "likes": 0, "reposts": 0, "replies": 0 }
-        }
-      ]
+      "content": "本文",
+      "media": ["https://..."],
+      "createdAt": "2026-11-09T20:04:05.857Z",
+      "url": "https://karotter.com/Sophie_twilight",
+      "isReply": false,
+      "replyTo": null,
+      "isQuote": false,
+      "metrics": { "likes": 0, "reposts": 0, "replies": 0, "views": 0 }
     }
-    ```
+  ]
+}
+```
 
-- `GET /api/services`：接続対応サービス一覧
+### `GET /api/user?service=karotter&id=<username|userId|handle>`
 
-## ディレクトリ構成
+サイト内プロフィール用。サービスごとの公開プロフィールと直近投稿20件を返す。
+
+```json
+{
+  "ok": true,
+  "profile": {
+    "service": "pitter",
+    "serviceName": "Pitter",
+    "serviceLabel": "pitter",
+    "username": "3",
+    "displayName": "社会科見学",
+    "bio": "...",
+    "avatarUrl": "https://pitter.jp/system/icon_image/....jpg",
+    "profileUrl": "https://pitter.jp/?profile=3",
+    "stats": { "followers": 31, "following": 33 },
+    "joinedAt": "2026-06-08T..."
+  },
+  "posts": [ ... ]
+}
+```
+
+### `GET /api/services` / `GET /api/health`
+
+## サービス別の取得元
+
+| サービス | 取得元 | プロフィール | 本家URL |
+|---|---|---|---|
+| Karotter | `api.karotter.com/api/posts/recommended?limit=100&mode=latest` | `/api/users/{username}` ＋ `/api/users/{username}/posts` | `karotter.com/{username}` |
+| Yudetter | `/api/yudates?limit=50` ＋ `cursor` | `/api/users/{username}` ＋ `/api/users/{username}/yudates` | `yudetter.com/yudates/{id}` |
+| あめ→はれ | `/api/timeline?bucket=latest&limit=40` ＋ `beforeSeq` | `/api/users/{userId}?bucket=main` | `am-hr.com/posts/{id}` |
+| Pitter | `/system/Post.php?action=latest&page=1-4` | `/system/Post.php?action=profile&handle=` | `pitter.jp/?post={id}` |
+
+- Karotter のフィードは数値IDのみを返し、本家のパーマリンク（`p_xxxxx`）は公開APIから引けないため、カードのリンクは投稿者のプロフィールへ送っている。
+- Pitter の画像・アイコンは相対パス（`system/icon_image/...`）で返るため、`https://pitter.jp/` を補っている。
+
+## 構成
 
 ```
 work/loomix/
-├── server.py           # BFFサーバー（Python標準ライブラリ）
-├── public/             # フロントエンド
-│   ├── index.html      # メイン画面
-│   ├── style.css       # スタイル（ダークテーマ・レスポンシブ）
-│   └── app.js          # タイムライン描画・自動更新ロジック
-├── REPORT.md           # API・認証仕様の調査レポート
-└── README.md           # 本ドキュメント
+├── server.py           # BFF（Python標準ライブラリ）
+├── public/             # index.html / style.css / app.js
+├── api/index.py        # Vercel 用エントリ（server.py を共有）
+├── Dockerfile          # Render 用
+├── vercel.json
+├── README.md
+└── REPORT.md           # 各SNSのAPI・認証仕様の実測レポート
 ```
+
+## 既知の制約
+
+- 各SNSの内部APIは非公開仕様のため、先方のUI改修で取得が壊れうる。`/api/timeline` の `errors` と `/api/health` で検知する。
+- Pitter は Cloudflare のマネージドチャレンジが断続的に出る。失敗時は他3サービスで継続する。
+- 取得件数はサービスごとの投稿頻度に比例するため、深夜などは Karotter が多くを占める（05:00時点で karotter 100件＝約3時間分、yudetter 100件＝約2日分）。

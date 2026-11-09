@@ -1,101 +1,96 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Loomix - 国産SNS統合タイムライン</title>
-  <link rel="stylesheet" href="style.css">
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🧵</text></svg>">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#000000">
+<meta name="description" content="Karotter / Yudetter / あめ→はれ / Pitter の公開タイムラインをひとつの流れに。">
+<title>Loomix</title>
+<link rel="stylesheet" href="style.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' fill='%23000'/%3E%3Cpath d='M14 20h36M14 32h36M14 44h36' stroke='%23bbb' stroke-width='2'/%3E%3C/svg%3E">
 </head>
 <body>
-  <div class="app-container">
-    <!-- Header -->
-    <header class="app-header">
-      <div class="header-left">
-        <div class="logo">
-          <span class="logo-icon">🧵</span>
-          <span class="logo-text">Loomix</span>
-          <span class="logo-tag">MVP v0.1</span>
-        </div>
-        <p class="tagline">国産SNSのタイムラインを、ひとつに織り交ぜる。</p>
-      </div>
-      <div class="header-actions">
-        <label class="auto-refresh-toggle" title="30秒ごとに自動更新">
-          <input type="checkbox" id="autoRefresh" checked>
-          <span class="toggle-slider"></span>
-          <span class="toggle-label">自動更新</span>
-        </label>
-        <button id="refreshBtn" class="btn-refresh" title="タイムラインを再読み込み">
-          <span class="refresh-icon">🔄</span>
-          <span class="btn-text">更新</span>
-        </button>
-      </div>
-    </header>
+<div class="app">
 
-    <!-- Service Filters -->
-    <nav class="service-nav">
-      <div class="filter-chips">
-        <button class="chip active" data-service="all">
-          <span class="chip-icon">🌐</span>
-          <span class="chip-label">すべて</span>
-          <span class="chip-badge" id="badge-all">0</span>
-        </button>
-        <button class="chip" data-service="karotter">
-          <span class="chip-icon">🥕</span>
-          <span class="chip-label">Karotter</span>
-          <span class="chip-badge" id="badge-karotter">0</span>
-        </button>
-        <button class="chip" data-service="yudetter">
-          <span class="chip-icon">🥚</span>
-          <span class="chip-label">Yudetter</span>
-          <span class="chip-badge" id="badge-yudetter">0</span>
-        </button>
-        <button class="chip" data-service="amehare">
-          <span class="chip-icon">☀️</span>
-          <span class="chip-label">あめ→はれ</span>
-          <span class="chip-badge" id="badge-amehare">0</span>
-        </button>
-        <button class="chip" data-service="pitter">
-          <span class="chip-icon">🕊️</span>
-          <span class="chip-label">Pitter</span>
-          <span class="chip-badge" id="badge-pitter">0</span>
-        </button>
-      </div>
-      <div class="status-bar">
-        <span id="lastUpdated" class="last-updated">取得中...</span>
-      </div>
-    </nav>
+  <header class="top">
+    <div class="brand">
+      <span class="brand-name">Loomix</span>
+      <span class="brand-ver">0.2</span>
+    </div>
+    <div class="top-tools">
+      <label class="auto" title="60秒ごとに更新">
+        <input type="checkbox" id="autoRefresh" checked>
+        <span class="box" aria-hidden="true"></span>
+        <span>自動更新</span>
+      </label>
+      <button id="refreshBtn" class="btn" type="button">更新</button>
+    </div>
+  </header>
 
-    <!-- Main Content -->
-    <main class="timeline-container">
-      <div id="loading" class="loading-state">
-        <div class="spinner"></div>
-        <p>4つのSNSからタイムラインを織り交ぜています...</p>
-      </div>
+  <nav class="filters" aria-label="サービス絞り込み">
+    <div class="filter-scroll" id="filterBar">
+      <button class="tab is-active" type="button" data-service="all" aria-pressed="true">
+        すべて<span class="n" id="count-all"></span>
+      </button>
+      <button class="tab" type="button" data-service="karotter" aria-pressed="false">
+        karotter<span class="n" id="count-karotter"></span>
+      </button>
+      <button class="tab" type="button" data-service="yudetter" aria-pressed="false">
+        yudetter<span class="n" id="count-yudetter"></span>
+      </button>
+      <button class="tab" type="button" data-service="amehare" aria-pressed="false">
+        am-hr<span class="n" id="count-amehare"></span>
+      </button>
+      <button class="tab" type="button" data-service="pitter" aria-pressed="false">
+        pitter<span class="n" id="count-pitter"></span>
+      </button>
+    </div>
+    <label class="reply-filter" title="返信を除いて表示">
+      <input type="checkbox" id="hideReplies">
+      <span class="box" aria-hidden="true"></span>
+      <span>返信を除外</span>
+    </label>
+  </nav>
 
-      <div id="error" class="error-state" style="display: none;">
-        <span class="error-icon">⚠️</span>
-        <p id="errorMsg">データの取得に失敗しました。</p>
-        <button class="btn-retry" onclick="fetchTimeline(true)">再試行</button>
-      </div>
+  <main class="feed" id="feed" aria-live="polite"></main>
 
-      <div id="timeline" class="timeline-feed" style="display: none;">
-        <!-- Posts will be injected here -->
-      </div>
-    </main>
-
-    <!-- Footer -->
-    <footer class="app-footer">
-      <p>Loomix &copy; 2026 · 国産SNS統合クライアント プロジェクト</p>
-      <div class="connected-services">
-        <span class="service-dot dot-karotter">Karotter</span>
-        <span class="service-dot dot-yudetter">Yudetter</span>
-        <span class="service-dot dot-amehare">あめ→はれ</span>
-        <span class="service-dot dot-pitter">Pitter</span>
-      </div>
-    </footer>
+  <div class="feed-end" id="feedEnd" hidden>
+    <button class="more" id="moreBtn" type="button">さらに読み込む</button>
+    <p class="stamp" id="stamp"></p>
   </div>
 
-  <script src="app.js"></script>
+  <div class="empty" id="empty" hidden>該当する投稿がありません</div>
+
+  <footer class="foot">
+    <span>Loomix 0.2</span>
+    <span id="statusLine">読み込み中</span>
+  </footer>
+
+</div>
+
+<!-- プロフィール（スライドオーバー） -->
+<div class="backdrop" id="backdrop" hidden></div>
+<aside class="drawer" id="drawer" role="dialog" aria-modal="true" aria-labelledby="drawerTitle" hidden>
+  <div class="drawer-head">
+    <h2 id="drawerTitle">プロフィール</h2>
+    <button class="close" id="drawerClose" type="button">閉じる</button>
+  </div>
+  <div class="drawer-body" id="drawerBody"></div>
+</aside>
+
+<!-- 画像拡大 -->
+<div class="lightbox" id="lightbox" role="dialog" aria-modal="true" aria-label="画像" hidden>
+  <div class="lb-bar">
+    <span id="lbCount"></span>
+    <button class="close" id="lbClose" type="button">閉じる</button>
+  </div>
+  <button class="lb-nav prev" id="lbPrev" type="button" aria-label="前の画像">‹</button>
+  <div class="lb-stage" id="lbStage">
+    <img id="lbImg" alt="">
+  </div>
+  <button class="lb-nav next" id="lbNext" type="button" aria-label="次の画像">›</button>
+</div>
+
+<script src="app.js"></script>
 </body>
 </html>
