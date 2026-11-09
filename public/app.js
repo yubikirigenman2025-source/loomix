@@ -89,10 +89,10 @@ function avatarMarkup(post, size) {
   const a = post.author || {};
   const key = `${post.service}:${esc(a.username || a.id)}`;
   if (a.avatarUrl) {
-    return `<img class="avatar" src="${esc(a.avatarUrl)}" alt="" loading="lazy" data-profile="${key}" data-service="${post.service}" data-handle="${esc(a.username || a.id)}" role="button" tabindex="0">`;
+    return `<img class="avatar" src="${esc(a.avatarUrl)}" alt="${esc(a.displayName || a.username || "")}のアイコン" loading="lazy" data-profile="${key}" data-service="${post.service}" data-handle="${esc(a.username || a.id)}" role="button" tabindex="0" aria-label="${esc(a.displayName || a.username || "")}のプロフィールを開く">`;
   }
   const initial = (a.displayName || a.username || "?").trim().slice(0, 1);
-  return `<span class="avatar-fallback" data-profile="${key}" data-service="${post.service}" data-handle="${esc(a.username || a.id)}" role="button" tabindex="0">${esc(initial)}</span>`;
+  return `<span class="avatar-fallback" data-profile="${key}" data-service="${post.service}" data-handle="${esc(a.username || a.id)}" role="button" tabindex="0" aria-label="${esc(a.displayName || a.username || "")}のプロフィールを開く">${esc(initial)}</span>`;
 }
 
 function mediaMarkup(post) {

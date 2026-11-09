@@ -676,6 +676,12 @@ class LoomixHandler(SimpleHTTPRequestHandler):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=PUBLIC_DIR, **kwargs)
+        self._static_cache = None
+
+    def end_headers(self):
+        if self._static_cache:
+            self.send_header("Cache-Control", self._static_cache)
+        super().end_headers()
 
     def log_message(self, fmt, *args):  # 静かに
         logging.info("%s - %s", self.address_string(), fmt % args)
@@ -756,6 +762,8 @@ class LoomixHandler(SimpleHTTPRequestHandler):
             })
             return
 
+        # 静的ファイルは毎回再検証させる（デプロイ直後の古いCSS/JSを避ける）
+        self._static_cache = "no-cache, must-revalidate"
         return super().do_GET()
 
 
