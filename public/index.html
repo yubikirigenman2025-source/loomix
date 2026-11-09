@@ -6,7 +6,7 @@
 <meta name="theme-color" content="#000000">
 <meta name="description" content="Karotter / Yudetter / あめ→はれ / Pitter の公開タイムラインをひとつの流れに。">
 <title>Loomix</title>
-<link rel="stylesheet" href="style.css?v=024">
+<link rel="stylesheet" href="style.css?v=030">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' fill='%23000'/%3E%3Cpath d='M14 20h36M14 32h36M14 44h36' stroke='%23bbb' stroke-width='2'/%3E%3C/svg%3E">
 </head>
 <body>
@@ -16,7 +16,7 @@
     <div class="top-inner">
     <div class="brand">
       <span class="brand-name">Loomix</span>
-      <span class="brand-ver">0.2</span>
+      <span class="brand-ver">0.3</span>
     </div>
     <div class="top-tools">
       <label class="auto" title="60秒ごとに更新">
@@ -59,7 +59,8 @@
   <main class="feed" id="feed" aria-live="polite"></main>
 
   <div class="feed-end" id="feedEnd" hidden>
-    <button class="more" id="moreBtn" type="button">さらに読み込む</button>
+    <p class="loading-line" id="loadingLine" hidden>読み込み中...</p>
+    <button class="more" id="moreBtn" type="button" hidden>さらに読み込む</button>
     <p class="stamp" id="stamp"></p>
   </div>
 
@@ -67,7 +68,7 @@
 
   <footer class="foot">
     <div class="foot-inner">
-      <span>Loomix 0.2</span>
+      <span>Loomix 0.3</span>
       <span id="statusLine">読み込み中</span>
     </div>
   </footer>
@@ -97,6 +98,6 @@
   <button class="lb-nav next" id="lbNext" type="button" aria-label="次の画像">›</button>
 </div>
 
-<script src="app.js?v=024"></script>
+<script src="app.js?v=030"></script>
 </body>
 </html>

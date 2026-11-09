@@ -431,7 +431,6 @@ a { color: inherit; }
   border-radius: 2px;
   padding: 6px 16px;
 }
-
 .more:hover { color: #fff; border-color: #333; }
 
 .stamp {
@@ -439,6 +438,13 @@ a { color: inherit; }
   font-size: 10px;
   color: #3a3a3a;
   font-variant-numeric: tabular-nums;
+}
+
+.loading-line {
+  margin: 0 0 10px;
+  font-size: 10px;
+  color: #4a4a4a;
+  letter-spacing: 0.04em;
 }
 
 .foot {

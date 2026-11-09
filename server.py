@@ -3,20 +3,23 @@
 Loomix - 国産SNS統合タイムラインリーダー
 Backend-For-Frontend (BFF) Server
 
-v0.2:
-  - 各サービスの取得深度を拡大（karotter 100 / yudetter 100 / am-hr 80 / pitter 80）
-  - 深い時系列マージと stale-while-revalidate キャッシュ
-  - サイト内プロフィール表示用 /api/user（各サービスの公開プロフィール + 直近投稿）
-  - 返信（reply）判定の正規化
+v0.3:
+  - カーソル式ページング: GET /api/timeline?before=<ISO8601|postId>&limit=40
+  - 過去ログの永続アーカイブ（一度取ったページは二度と外部APIへ取りに行かない）
+  - サービスごとのレートリミット（最低間隔・毎分上限・単一実行ロック）
+  - 新着は差分同期（既知の投稿に当たったら止める）
+  - サイト内プロフィール表示用 /api/user
   - gzip 応答
 """
 
+import collections
 import gzip
 import json
 import logging
 import os
 import re
 import ssl
+import tempfile
 import threading
 import time
 import urllib.parse
@@ -30,20 +33,42 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 
 PORT = int(os.environ.get("PORT", 8080))
 PUBLIC_DIR = os.path.join(os.path.dirname(__file__), "public")
+VERSION = "0.3"
 
 SSL_CTX = ssl.create_default_context()
 
-# 相手先サーバーへの負荷を抑えるため、キャッシュが古い場合は
-# まず手元のデータを返し、裏で1回だけ更新する（stale-while-revalidate）。
-CACHE_TTL_SEC = 60
-CACHE_STALE_SEC = 60 * 30
+# ---------------------------------------------------------------- 設定
 
+# 1回の応答で返す既定件数と上限
+DEFAULT_LIMIT = 40
+MAX_LIMIT = 80
+
+# 新着同期の最短間隔（これより短い間隔でクライアントが叩いても外部へは行かない）
+CACHE_TTL_SEC = 60
+
+# 初回（アーカイブが空のとき）だけ各サービスから取る深さ
 DEPTH = {
     "karotter": 100,
     "yudetter": 100,
     "amehare": 80,
     "pitter": 80,
 }
+
+# 各サービスの1ページあたりの取得件数（先方APIの実測値）
+PAGE_SIZE = {
+    "karotter": 40,
+    "yudetter": 40,
+    "amehare": 40,
+    "pitter": 20,
+}
+
+# 相手先サーバーへの負荷制御
+MIN_INTERVAL = 0.5          # 同一サービスへの連続リクエストの最低間隔（秒）
+COLD_INTERVAL = 0.25        # 初回充填時だけ少し詰める
+RATE_PER_MIN = 60           # 同一サービスへの1分あたりの上限
+REQUEST_BUDGET_SEC = 20.0   # /api/timeline 1回の応答で外部APIを待つ上限
+MAX_ROUNDS = 8              # 1回の応答でアーカイブを伸ばすラウンド数
+ARCHIVE_CAP = 6000          # 1サービスあたりの保持上限（メモリ保護）
 
 SERVICES = [
     {"id": "karotter", "name": "Karotter", "label": "karotter", "url": "https://karotter.com"},
@@ -52,6 +77,27 @@ SERVICES = [
     {"id": "pitter", "name": "Pitter", "label": "pitter", "url": "https://pitter.jp"},
 ]
 SERVICE_BY_ID = {s["id"]: s for s in SERVICES}
+SERVICE_IDS = [s["id"] for s in SERVICES]
+
+
+def _cache_dir():
+    base = os.environ.get("LOOMIX_CACHE_DIR")
+    if not base:
+        base = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".cache")
+    try:
+        os.makedirs(base, exist_ok=True)
+        probe = os.path.join(base, ".write-test")
+        with open(probe, "w", encoding="utf-8") as f:
+            f.write("1")
+        os.remove(probe)
+        return base
+    except Exception:  # noqa: BLE001 - 書けない環境では /tmp に退避
+        fallback = os.path.join(tempfile.gettempdir(), "loomix-cache")
+        os.makedirs(fallback, exist_ok=True)
+        return fallback
+
+
+CACHE_DIR = _cache_dir()
 
 
 def browser_headers(extra=None):
@@ -70,7 +116,7 @@ class FetchError(Exception):
     pass
 
 
-def fetch_json(url, headers=None, timeout=12, retries=2):
+def fetch_json(url, headers=None, timeout=12, retries=1):
     last = None
     for attempt in range(retries + 1):
         try:
@@ -105,7 +151,8 @@ def parse_iso(value):
     if not value:
         return None
     try:
-        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
     except Exception:
         return None
 
@@ -190,12 +237,15 @@ def karotter_post(p):
     )
 
 
-def fetch_karotter(limit=DEPTH["karotter"]):
-    data = fetch_json(
-        "%s/posts/recommended?limit=%d&mode=latest" % (KAROTTER_API, limit),
-        headers=_karotter_headers(),
-    )
-    return [karotter_post(p) for p in (data.get("posts") or [])][:limit]
+def karotter_page(cursor=None):
+    """1ページ分。cursor は先方が返す nextCursor（不透明なトークン）。"""
+    url = "%s/posts/recommended?limit=%d&mode=latest" % (KAROTTER_API, PAGE_SIZE["karotter"])
+    if cursor:
+        url += "&cursor=%s" % urllib.parse.quote(str(cursor))
+    data = fetch_json(url, headers=_karotter_headers())
+    posts = [karotter_post(p) for p in (data.get("posts") or [])]
+    pagination = data.get("pagination") or {}
+    return posts, pagination.get("nextCursor")
 
 
 # ---------------------------------------------------------------- Yudetter
@@ -237,27 +287,13 @@ def yudetter_post(p):
     )
 
 
-def yudetter_items(limit):
-    items = []
-    cursor = None
-    while len(items) < limit:
-        page = min(50, limit - len(items))
-        url = "%s/api/yudates?limit=%d" % (YUDETTER_HOST, page)
-        if cursor:
-            url += "&cursor=%s" % urllib.parse.quote(str(cursor))
-        data = fetch_json(url, headers=_yudetter_headers())
-        batch = data.get("items") or []
-        if not batch:
-            break
-        items.extend(batch)
-        cursor = data.get("nextCursor")
-        if not cursor:
-            break
-    return items[:limit]
-
-
-def fetch_yudetter(limit=DEPTH["yudetter"]):
-    return [yudetter_post(p) for p in yudetter_items(limit)]
+def yudetter_page(cursor=None):
+    url = "%s/api/yudates?limit=%d" % (YUDETTER_HOST, PAGE_SIZE["yudetter"])
+    if cursor:
+        url += "&cursor=%s" % urllib.parse.quote(str(cursor))
+    data = fetch_json(url, headers=_yudetter_headers())
+    posts = [yudetter_post(p) for p in (data.get("items") or [])]
+    return posts, data.get("nextCursor")
 
 
 # ---------------------------------------------------------------- あめ→はれ
@@ -314,23 +350,16 @@ def amehare_post(item):
     )
 
 
-def fetch_amehare(limit=DEPTH["amehare"]):
-    timeline = []
-    before = None
-    while len(timeline) < limit:
-        page = min(40, limit - len(timeline))
-        url = "%s/api/timeline?bucket=latest&limit=%d" % (AMEHARE_HOST, page)
-        if before:
-            url += "&beforeSeq=%s" % before
-        data = fetch_json(url, headers=_amehare_headers())
-        batch = data.get("timeline") or []
-        if not batch:
-            break
-        timeline.extend(batch)
-        before = batch[-1].get("seq")
-        if not before:
-            break
-    return [amehare_post(item) for item in timeline[:limit]]
+def amehare_page(cursor=None):
+    """cursor は beforeSeq（最後に取った投稿の seq）。"""
+    url = "%s/api/timeline?bucket=latest&limit=%d" % (AMEHARE_HOST, PAGE_SIZE["amehare"])
+    if cursor:
+        url += "&beforeSeq=%s" % urllib.parse.quote(str(cursor))
+    data = fetch_json(url, headers=_amehare_headers())
+    batch = data.get("timeline") or []
+    posts = [amehare_post(item) for item in batch]
+    nxt = (batch[-1] or {}).get("seq") if batch else None
+    return posts, (nxt if batch else None)
 
 
 # ---------------------------------------------------------------- Pitter
@@ -410,130 +439,609 @@ def pitter_post(p):
     )
 
 
-def fetch_pitter(limit=DEPTH["pitter"]):
-    posts = []
-    page = 1
-    while len(posts) < limit and page <= 6:
-        data = fetch_json(
-            "%s/system/Post.php?action=latest&page=%d" % (PITTER_HOST, page),
-            headers=_pitter_headers(),
-        )
-        batch = data.get("data") or []
-        if not batch:
-            break
-        posts.extend(batch)
-        page += 1
-    return [pitter_post(p) for p in posts[:limit]]
+def pitter_page(cursor=None):
+    """cursor はページ番号（20件/ページ）。"""
+    try:
+        page = max(1, int(cursor or 1))
+    except Exception:
+        page = 1
+    data = fetch_json(
+        "%s/system/Post.php?action=latest&page=%d" % (PITTER_HOST, page),
+        headers=_pitter_headers(),
+    )
+    batch = data.get("data") or []
+    posts = [pitter_post(p) for p in batch]
+    nxt = page + 1 if len(batch) >= PAGE_SIZE["pitter"] else None
+    return posts, nxt
 
 
-# ---------------------------------------------------------------- merge
-
-FETCHERS = {
-    "karotter": fetch_karotter,
-    "yudetter": fetch_yudetter,
-    "amehare": fetch_amehare,
-    "pitter": fetch_pitter,
+PAGERS = {
+    "karotter": karotter_page,
+    "yudetter": yudetter_page,
+    "amehare": amehare_page,
+    "pitter": pitter_page,
 }
 
-_cache = {"data": None, "ts": 0.0}
-_cache_lock = threading.Lock()
-_refresh_lock = threading.Lock()
-_refreshing = threading.Event()
+
+def post_sort_key(post):
+    dt = parse_iso(post.get("createdAt"))
+    return dt or datetime.min.replace(tzinfo=timezone.utc)
 
 
-def merge_all(force=False):
-    posts = []
-    counts = {}
-    errors = {}
-    with ThreadPoolExecutor(max_workers=4) as executor:
-        futures = {name: executor.submit(fn) for name, fn in FETCHERS.items()}
-        for name, future in futures.items():
-            try:
-                result = future.result()
-                posts.extend(result)
-                counts[name] = len(result)
-            except Exception as e:  # noqa: BLE001
-                logging.warning("%s fetch failed: %s", name, e)
-                counts[name] = 0
-                errors[name] = str(e)[:200]
-
-    def key(p):
-        dt = parse_iso(p.get("createdAt"))
-        return dt or datetime.min.replace(tzinfo=timezone.utc)
-
-    posts.sort(key=key, reverse=True)
-
-    return {
-        "ok": True,
-        "fetchedAt": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-        "total": len(posts),
-        "serviceCounts": counts,
-        "errors": errors,
-        "services": SERVICES,
-        "posts": posts,
-    }
+# ---------------------------------------------------------------- アーカイブ
+#
+# 一度でも取得したページはディスクとメモリに残し、同じ過去範囲は
+# 外部APIへ行かずに返す。過去の投稿は基本不変なので、履歴の取得は
+# 「サービスごとに一生で1回だけ」に近づく。
 
 
-def refresh_cache():
-    # 同時アクセスでも更新は1本に絞り、待った側は新しいキャッシュを受け取る
-    with _refresh_lock:
-        with _cache_lock:
-            current = _cache["data"]
-            age = time.time() - _cache["ts"]
-        if current and age < 3:
-            return current
-        data = merge_all()
-        with _cache_lock:
-            _cache["data"] = data
-            _cache["ts"] = time.time()
-        return data
+class Archive:
+    def __init__(self, sid):
+        self.sid = sid
+        self.posts = {}
+        self.tail_cursor = None      # 古い方向へ進むためのカーソル
+        self.exhausted = False       # それ以上古い投稿は無い
+        self.floor_ts = None         # カーソルが到達した時点（ここまで漏れなく読んだ）
+        self.pages = 0               # 取得済みページ数（起動後）
+        self.error = None
+        self._sorted = None
+        self._lock = threading.RLock()
+        self._fetch_lock = threading.Lock()   # 同一サービスへの同時リクエストを1本に
+        self._rate_lock = threading.Lock()
+        self._last_call = 0.0
+        self._recent = collections.deque()
+        self._appended = 0
+        self._used_cursors = set()
+        self._last_prefetch = 0.0
 
+    # -- データ
 
-def background_refresh():
-    if _refreshing.is_set():
-        return
-    _refreshing.set()
+    def __len__(self):
+        with self._lock:
+            return len(self.posts)
 
-    def run():
+    def add(self, posts):
+        """新規分だけをアーカイブへ入れ、ディスクにも追記する。"""
+        fresh = []
+        with self._lock:
+            for p in posts:
+                pid = p.get("id")
+                if not pid or pid in self.posts:
+                    continue
+                self.posts[pid] = p
+                fresh.append(p)
+            if fresh:
+                self._sorted = None
+        if fresh:
+            self._append_to_disk(fresh)
+        return len(fresh)
+
+    def has(self, pid):
+        with self._lock:
+            return pid in self.posts
+
+    def _items(self):
+        """(時刻, 投稿) の降順リスト。時刻はここで一度だけ解釈して使い回す。"""
+        with self._lock:
+            if self._sorted is None:
+                items = []
+                for p in self.posts.values():
+                    dt = parse_iso(p.get("createdAt"))
+                    if dt is not None:
+                        items.append((dt, p))
+                items.sort(key=lambda x: x[0], reverse=True)
+                self._sorted = items
+            return self._sorted
+
+    def newest(self, limit):
+        return [p for _, p in self._items()[:limit]]
+
+    def older_than(self, ts, limit, respect_floor=True):
+        """ts より古い投稿（境界含む）。respect_floor なら探索済みの範囲だけ。
+
+        先方の並びには、古い投稿のリポストが日付だけ古く混ざることがある。
+        探索済みの床より下は「まだ見ていない時代」なので、床を越えて返すと
+        ページの下端が飛んでしまう。床より上だけを返す。
+        """
+        floor = self.floor_ts if (respect_floor and not self.exhausted) else None
+        out = []
+        for dt, p in self._items():
+            if dt > ts:
+                continue
+            if floor is not None and dt < floor:
+                continue
+            out.append(p)
+            if len(out) >= limit:
+                break
+        return out
+
+    def headroom(self, ts):
+        """ts より古い、探索済み範囲の投稿数。"""
+        floor = self.floor_ts if not self.exhausted else None
+        n = 0
+        for dt, _p in self._items():
+            if dt > ts:
+                continue
+            if floor is not None and dt < floor:
+                break
+            n += 1
+        return n
+
+    def has_older_than(self, ts):
+        items = self._items()
+        return bool(items) and items[-1][0] < ts
+
+    def reserve_ok(self, ts, limit):
+        """ts より古い範囲を「limit 件以上」漏れなく持っているか。
+
+        ページは新しい順に limit 件を切り出すので、各サービスが limit 件の
+        余裕を持っていれば、ページの下端まで全サービスの探索が届いている。
+        """
+        if self.exhausted:
+            return True
+        return self.headroom(ts) >= limit
+
+    def oldest_ts(self):
+        items = self._items()
+        return items[-1][0] if items else None
+
+    # -- ディスク
+
+    def _path(self):
+        return os.path.join(CACHE_DIR, "%s.jsonl" % self.sid)
+
+    def _append_to_disk(self, posts):
         try:
-            refresh_cache()
+            with open(self._path(), "a", encoding="utf-8") as f:
+                for p in posts:
+                    f.write(json.dumps(p, ensure_ascii=False, separators=(",", ":")) + "\n")
+            self._appended += len(posts)
+        except Exception as e:  # noqa: BLE001 - ディスクが無くても動作は続ける
+            logging.warning("archive append %s failed: %s", self.sid, e)
+
+    def load_from_disk(self):
+        path = self._path()
+        if not os.path.exists(path):
+            return
+        loaded = 0
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        p = json.loads(line)
+                    except Exception:
+                        continue  # 書き込み途中で落ちた行は捨てる
+                    pid = p.get("id")
+                    if pid and pid not in self.posts:
+                        self.posts[pid] = p
+                        loaded += 1
         except Exception as e:  # noqa: BLE001
-            logging.warning("background refresh failed: %s", e)
-        finally:
-            _refreshing.clear()
+            logging.warning("archive load %s failed: %s", self.sid, e)
+        if loaded:
+            self._sorted = None
+            logging.info("archive %s loaded %d posts", self.sid, loaded)
+
+    # -- レート制限
+
+    def take_token(self, min_interval=MIN_INTERVAL, max_wait=1.5):
+        """外部APIを叩いてよいか判定。最低間隔はここで待って守る。"""
+        with self._rate_lock:
+            now = time.time()
+            while self._recent and now - self._recent[0] > 60:
+                self._recent.popleft()
+            if len(self._recent) >= RATE_PER_MIN:
+                logging.warning("%s rate limit reached (%d/min)", self.sid, RATE_PER_MIN)
+                return False
+            wait = self._last_call + min_interval - now
+            if wait > max_wait:
+                return False
+            if wait > 0:
+                time.sleep(wait)
+                now = time.time()
+            self._last_call = now
+            self._recent.append(now)
+            return True
+
+    # -- 取得
+
+    def deepen(self, want_ts=None, reserve=0, max_pages=1, min_interval=MIN_INTERVAL):
+        """アーカイブを古い方向へ伸ばす。want_ts より古い範囲に reserve 件
+        たまったら止める（None なら指定ページ数だけ）。"""
+        progressed = False
+        for _ in range(max_pages):
+            if self.exhausted:
+                break
+            if want_ts is not None and self.reserve_ok(want_ts, reserve):
+                break
+            if len(self) >= ARCHIVE_CAP:
+                self.exhausted = True
+                break
+            with self._fetch_lock:
+                # 待っている間に対応が済んでいるかもしれない
+                if self.exhausted or (want_ts is not None and self.reserve_ok(want_ts, reserve)):
+                    break
+                if not self.take_token(min_interval=min_interval):
+                    break
+                cursor = self.tail_cursor
+                try:
+                    posts, nxt = PAGERS[self.sid](cursor)
+                except Exception as e:  # noqa: BLE001
+                    self.error = str(e)[:200]
+                    logging.warning("%s deepen failed: %s", self.sid, e)
+                    break
+                self.add(posts)
+                self.pages += 1
+                self.error = None
+                if not posts or not nxt or nxt == cursor or nxt in self._used_cursors:
+                    self.exhausted = True
+                # ページ末尾の時刻＝次に読む位置
+                last = parse_iso(posts[-1].get("createdAt")) if posts else None
+                if last and (self.floor_ts is None or last < self.floor_ts):
+                    self.floor_ts = last
+                if nxt and len(self._used_cursors) < 20000:
+                    self._used_cursors.add(nxt)
+                self.tail_cursor = nxt
+                progressed = True
+                if not posts:
+                    break
+        return progressed
+
+    def fill_newest(self):
+        """新着を差分で取り込む。既知の投稿に当たったらそこで止める。"""
+        with self._fetch_lock:
+            if len(self) == 0:
+                return self._fill_initial()
+            if not self.take_token(min_interval=max(CACHE_TTL_SEC / 10.0, MIN_INTERVAL)):
+                return False
+            try:
+                posts, nxt = PAGERS[self.sid](None)
+            except Exception as e:  # noqa: BLE001
+                self.error = str(e)[:200]
+                logging.warning("%s refresh failed: %s", self.sid, e)
+                return False
+            overlap = any(self.has(p.get("id")) for p in posts)
+            self.add(posts)
+            self.pages += 1
+            self.error = None
+            # 既知の投稿に届いていない＝取りこぼしがある。最大2ページだけ追加で追う。
+            pages = 1
+            while not overlap and nxt and not self.exhausted and pages < 3:
+                if not self.take_token():
+                    break
+                try:
+                    posts, nxt = PAGERS[self.sid](nxt)
+                except Exception as e:  # noqa: BLE001
+                    self.error = str(e)[:200]
+                    break
+                overlap = any(self.has(p.get("id")) for p in posts)
+                self.add(posts)
+                self.pages += 1
+                pages += 1
+                if not posts:
+                    break
+            return True
+
+    def _fill_initial(self):
+        """空のアーカイブを DEPTH まで充填し、続きのカーソルを覚える。"""
+        target = DEPTH.get(self.sid, 40)
+        cursor = None
+        pages = 0
+        while len(self) < target and pages < 8:
+            if not self.take_token(min_interval=COLD_INTERVAL):
+                break
+            try:
+                posts, nxt = PAGERS[self.sid](cursor)
+            except Exception as e:  # noqa: BLE001
+                self.error = str(e)[:200]
+                logging.warning("%s initial fill failed: %s", self.sid, e)
+                break
+            self.add(posts)
+            self.pages += 1
+            pages += 1
+            self.tail_cursor = nxt
+            self.error = None
+            if posts:
+                last = parse_iso(posts[-1].get("createdAt"))
+                if last and (self.floor_ts is None or last < self.floor_ts):
+                    self.floor_ts = last
+            if not posts or not nxt:
+                self.exhausted = True
+                break
+            cursor = nxt
+        return True
+
+
+ARCHIVE = {sid: Archive(sid) for sid in SERVICE_IDS}
+_archive_loaded = False
+_archive_load_lock = threading.Lock()
+_sync_lock = threading.Lock()
+_last_sync = 0.0
+_last_save = 0.0
+
+
+def _state_path():
+    return os.path.join(CACHE_DIR, "state.json")
+
+
+def ensure_archive():
+    global _archive_loaded
+    with _archive_load_lock:
+        if _archive_loaded:
+            return
+        for sid in SERVICE_IDS:
+            ARCHIVE[sid].load_from_disk()
+        try:
+            if os.path.exists(_state_path()):
+                with open(_state_path(), "r", encoding="utf-8") as f:
+                    saved = json.load(f)
+                for sid in SERVICE_IDS:
+                    st = saved.get(sid) or {}
+                    a = ARCHIVE[sid]
+                    # 投稿本文（jsonl）とカーソル（state）は同じ場所に保存している。
+                    # 片方だけ古い場合は、重複取得になるだけで欠落はしない。
+                    if st:
+                        if st.get("tailCursor") is not None:
+                            a.tail_cursor = st["tailCursor"]
+                        a.exhausted = bool(st.get("exhausted"))
+                        a.floor_ts = parse_iso(st.get("floorTs")) or a.floor_ts
+                    if a.floor_ts is None and len(a):
+                        # 状態が欠けている古いアーカイブの拾い直し
+                        if a.tail_cursor:
+                            a.floor_ts = a.oldest_ts()
+                        else:
+                            top = a.newest(1)
+                            a.floor_ts = parse_iso(top[0].get("createdAt")) if top else None
+        except Exception as e:  # noqa: BLE001
+            logging.warning("state load failed: %s", e)
+        _archive_loaded = True
+        logging.info("archive ready: %s", {sid: len(ARCHIVE[sid]) for sid in SERVICE_IDS})
+
+
+def save_state(force=False):
+    """カーソルと終端フラグだけを保存する（本文は jsonl に追記済み）。"""
+    global _last_save
+    now = time.time()
+    if not force and now - _last_save < 10:
+        return
+    _last_save = now
+    data = {}
+    for sid in SERVICE_IDS:
+        a = ARCHIVE[sid]
+        with a._lock:
+            data[sid] = {
+                "tailCursor": a.tail_cursor,
+                "exhausted": a.exhausted,
+                "count": len(a.posts),
+                "floorTs": iso_z(a.floor_ts) if a.floor_ts else None,
+            }
+    try:
+        tmp = _state_path() + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False)
+        os.replace(tmp, _state_path())
+    except Exception as e:  # noqa: BLE001
+        logging.warning("state save failed: %s", e)
+
+
+def sync_newest(force=False):
+    """各サービスの新着を差分同期する（最短 CACHE_TTL_SEC 間隔）。"""
+    global _last_sync
+    now = time.time()
+    if not force and now - _last_sync < CACHE_TTL_SEC:
+        return
+    with _sync_lock:
+        if not force and time.time() - _last_sync < 5:
+            return
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            list(executor.map(lambda sid: ARCHIVE[sid].fill_newest(), SERVICE_IDS))
+        _last_sync = time.time()
+        save_state()
+
+
+# ---------------------------------------------------------------- タイムライン
+
+
+def _sids(service):
+    if service in (None, "", "all"):
+        return list(SERVICE_IDS)
+    return [service]
+
+
+def _merged(posts):
+    """重複を落として新しい順に。"""
+    seen = set()
+    out = []
+    for p in sorted(posts, key=post_sort_key, reverse=True):
+        pid = p.get("id")
+        if pid in seen:
+            continue
+        seen.add(pid)
+        out.append(p)
+    return out
+
+
+def _errors():
+    errs = {}
+    for sid in SERVICE_IDS:
+        e = ARCHIVE[sid].error
+        if e:
+            errs[sid] = e
+    return errs
+
+
+def _counts(posts=None):
+    if posts is None:
+        return {sid: len(ARCHIVE[sid]) for sid in SERVICE_IDS}
+    counts = {sid: 0 for sid in SERVICE_IDS}
+    for p in posts:
+        if p.get("service") in counts:
+            counts[p["service"]] += 1
+    return counts
+
+
+def _has_more(sids, next_before_ts):
+    if next_before_ts is None:
+        return False
+    for sid in sids:
+        a = ARCHIVE[sid]
+        if not a.exhausted:
+            return True
+        if a.has_older_than(next_before_ts):
+            return True
+    return False
+
+
+def resolve_before(raw):
+    """before は ISO8601 か投稿ID（Loomix id / 先方 id のどちらでも）。"""
+    if raw is None or raw == "":
+        return None
+    dt = parse_iso(raw)
+    if dt:
+        return dt
+    key = str(raw)
+    for sid in SERVICE_IDS:
+        a = ARCHIVE[sid]
+        with a._lock:
+            hit = a.posts.get(key)
+            if hit is None:
+                for p in a.posts.values():
+                    if str(p.get("rawId")) == key:
+                        hit = p
+                        break
+        if hit is not None:
+            dt = parse_iso(hit.get("createdAt"))
+            if dt:
+                return dt
+    return None
+
+
+def newest_page(limit, service):
+    sids = _sids(service)
+    posts = []
+    for sid in sids:
+        posts.extend(ARCHIVE[sid].newest(limit))
+    posts = _merged(posts)[:limit]
+    next_ts = parse_iso(posts[-1].get("createdAt")) if posts else None
+    return posts, next_ts
+
+
+def older_page(ts, limit, service):
+    """ts より古い投稿を limit 件。足りなければアーカイブを必要な分だけ伸ばす。
+
+    全サービスが ts より古い範囲を漏れなく持っていないと、欠けた投稿を
+    黙って飛ばすことになる。その場合は空ページ＋partial を返し、
+    クライアントに少し待って再要求させる（次回は続きから伸ばせる）。
+    """
+    sids = _sids(service)
+    deadline = time.time() + REQUEST_BUDGET_SEC
+    for _ in range(MAX_ROUNDS):
+        missing = [sid for sid in sids if not ARCHIVE[sid].reserve_ok(ts, limit)]
+        if not missing:
+            break
+        if time.time() >= deadline:
+            break
+        with ThreadPoolExecutor(max_workers=len(missing)) as executor:
+            list(executor.map(
+                lambda sid: ARCHIVE[sid].deepen(want_ts=ts, reserve=limit, max_pages=1), missing))
+
+    if any(not ARCHIVE[sid].reserve_ok(ts, limit) for sid in sids):
+        save_state()
+        return [], True
+
+    posts = []
+    for sid in sids:
+        posts.extend(ARCHIVE[sid].older_than(ts, limit))
+    posts = _merged(posts)[:limit]
+    save_state()
+    return posts, False
+
+
+PREFETCH_MIN_GAP = 8.0   # 同じサービスの先取りはこの間隔を空ける
+
+
+def prefetch(sids, ts, limit):
+    """次のページ分の余裕が減ったサービスだけ、裏で1ページ先取りする。
+
+    応答は待たない。取るのは一生で1回のページなので総量は増えない。
+    """
+    def run():
+        for sid in sids:
+            a = ARCHIVE[sid]
+            if a.exhausted:
+                continue
+            if a.headroom(ts) >= limit + PAGE_SIZE[sid]:
+                continue  # まだ余裕がある
+            now = time.time()
+            if now - a._last_prefetch < PREFETCH_MIN_GAP:
+                continue
+            a._last_prefetch = now
+            a.deepen(want_ts=ts, reserve=limit + PAGE_SIZE[sid], max_pages=1)
 
     threading.Thread(target=run, daemon=True).start()
 
 
-def get_timeline():
-    """最新ならキャッシュ、古ければ即返しつつ裏で更新、無ければ同期取得。"""
-    now = time.time()
-    with _cache_lock:
-        data = _cache["data"]
-        age = now - _cache["ts"]
-    if data and age < CACHE_TTL_SEC:
-        return data
-    if data and age < CACHE_STALE_SEC:
-        background_refresh()
-        return data
-    return refresh_cache()
+def timeline_page(before_raw, limit, service, force=False):
+    ensure_archive()
+    limit = max(1, min(int(limit or DEFAULT_LIMIT), MAX_LIMIT))
+    if service not in (None, "", "all") and service not in SERVICE_BY_ID:
+        raise ValueError("unknown service")
 
+    sids = _sids(service)
+    sync_newest(force=force)
 
-# ---------------------------------------------------------------- profile
+    if before_raw:
+        ts = resolve_before(before_raw)
+        if ts is None:
+            raise ValueError("before を解釈できません（ISO8601 か投稿IDを指定してください）")
+        posts, partial = older_page(ts, limit, service)
+        next_ts = parse_iso(posts[-1].get("createdAt")) if posts else ts
+        has_more = _has_more(sids, next_ts)
+        if posts and not partial:
+            prefetch(sids, next_ts, limit)
+    else:
+        posts, next_ts = newest_page(limit, service)
+        partial = False
+        has_more = _has_more(sids, next_ts)
+        if posts:
+            prefetch(sids, next_ts, limit)
+
+    return {
+        "ok": True,
+        "version": VERSION,
+        "fetchedAt": iso_z(datetime.now(timezone.utc)),
+        "total": len(posts),
+        "allTotal": sum(len(ARCHIVE[sid]) for sid in sids),
+        "serviceCounts": _counts(posts),
+        "archiveCounts": {sid: len(ARCHIVE[sid]) for sid in sids},
+        "errors": _errors(),
+        "services": [SERVICE_BY_ID[sid] for sid in sids],
+        "posts": posts,
+        "limit": limit,
+        "nextBefore": iso_z(next_ts) if next_ts else None,
+        "hasMore": has_more,
+        "partial": partial,
+        "retryAfterMs": 1200 if (partial and not posts) else None,
+    }
+
 
 def timeline_posts_for(service, handle):
-    """キャッシュ済みタイムラインから、そのユーザーの投稿だけ拾う（フォールバック）。"""
-    with _cache_lock:
-        data = _cache["data"] or {}
+    """アーカイブから、そのユーザーの投稿だけ拾う（プロフィールのフォールバック）。"""
+    a = ARCHIVE.get(service)
+    if not a:
+        return []
     out = []
-    for p in data.get("posts") or []:
-        if p["service"] != service:
-            continue
-        a = p.get("author") or {}
-        keys = {str(a.get("username") or ""), str(a.get("id") or "")}
+    for p in a.newest(ARCHIVE_CAP):
+        author = p.get("author") or {}
+        keys = {str(author.get("username") or ""), str(author.get("id") or "")}
         if handle in keys:
             out.append(p)
     return out
+
+
+# ---------------------------------------------------------------- profile
 
 
 def _profile(service, handle):
@@ -669,12 +1177,41 @@ def get_profile(service, handle):
 
 # ---------------------------------------------------------------- HTTP
 
+
 def json_bytes(obj):
     return json.dumps(obj, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
 
 
+def health():
+    ensure_archive()
+    age = round(time.time() - _last_sync) if _last_sync else None
+    oldest = {sid: ARCHIVE[sid].floor_ts for sid in SERVICE_IDS}
+    return {
+        "ok": True,
+        "version": VERSION,
+        "cacheAgeSec": age,
+        "total": sum(len(ARCHIVE[sid]) for sid in SERVICE_IDS),
+        "serviceCounts": {sid: len(ARCHIVE[sid]) for sid in SERVICE_IDS},
+        "archive": {
+            sid: {
+                "count": len(ARCHIVE[sid]),
+                "pages": ARCHIVE[sid].pages,
+                "floor": iso_z(oldest[sid]) if oldest[sid] else None,
+                "exhausted": ARCHIVE[sid].exhausted,
+                "hasCursor": bool(ARCHIVE[sid].tail_cursor),
+                "error": ARCHIVE[sid].error,
+            }
+            for sid in SERVICE_IDS
+        },
+        "throttle": {
+            "minIntervalSec": MIN_INTERVAL,
+            "ratePerMin": RATE_PER_MIN,
+        },
+    }
+
+
 class LoomixHandler(SimpleHTTPRequestHandler):
-    server_version = "Loomix/0.2"
+    server_version = "Loomix/" + VERSION
     _static_cache = None
 
     def __init__(self, *args, **kwargs):
@@ -711,24 +1248,25 @@ class LoomixHandler(SimpleHTTPRequestHandler):
         query = parse_qs(parsed.query)
 
         if path == "/api/timeline":
-            service_filter = query.get("service", ["all"])[0]
+            service = query.get("service", ["all"])[0]
             force = query.get("refresh", ["0"])[0] not in ("", "0", "false")
-            data = refresh_cache() if force else get_timeline()
-
-            posts = data["posts"]
-            if service_filter != "all":
-                posts = [p for p in posts if p["service"] == service_filter]
-
-            self._send_json({
-                "ok": True,
-                "fetchedAt": data["fetchedAt"],
-                "total": len(posts),
-                "allTotal": data["total"],
-                "serviceCounts": data["serviceCounts"],
-                "errors": data.get("errors") or {},
-                "services": SERVICES,
-                "posts": posts,
-            }, cache_control="public, max-age=30")
+            try:
+                limit = int(query.get("limit", [str(DEFAULT_LIMIT)])[0] or DEFAULT_LIMIT)
+            except Exception:
+                limit = DEFAULT_LIMIT
+            before = query.get("before", [None])[0]
+            try:
+                result = timeline_page(before, limit, service, force=force)
+            except ValueError as e:
+                self._send_json({"ok": False, "error": str(e)}, status=400)
+                return
+            except Exception as e:  # noqa: BLE001
+                logging.exception("timeline failed")
+                self._send_json({"ok": False, "error": "タイムラインを取得できませんでした: %s" % e},
+                                status=502)
+                return
+            # 過去ページは不変なので短時間キャッシュしてよい
+            self._send_json(result, cache_control="public, max-age=20")
             return
 
         if path == "/api/user":
@@ -749,19 +1287,11 @@ class LoomixHandler(SimpleHTTPRequestHandler):
             return
 
         if path == "/api/services":
-            self._send_json({"ok": True, "services": SERVICES})
+            self._send_json({"ok": True, "version": VERSION, "services": SERVICES})
             return
 
         if path == "/api/health":
-            with _cache_lock:
-                age = time.time() - _cache["ts"] if _cache["data"] else None
-            self._send_json({
-                "ok": True,
-                "version": "0.2",
-                "cacheAgeSec": round(age) if age is not None else None,
-                "total": (_cache["data"] or {}).get("total"),
-                "serviceCounts": (_cache["data"] or {}).get("serviceCounts"),
-            })
+            self._send_json(health())
             return
 
         # 静的ファイルは毎回再検証させる（デプロイ直後の古いCSS/JSを避ける）
@@ -773,7 +1303,8 @@ if __name__ == "__main__":
     server_address = ("0.0.0.0", PORT)
     httpd = ThreadingHTTPServer(server_address, LoomixHandler)
     httpd.daemon_threads = True
-    logging.info("Loomix BFF server listening on http://0.0.0.0:%d", PORT)
+    logging.info("Loomix BFF server %s listening on http://0.0.0.0:%d", VERSION, PORT)
+    logging.info("archive dir: %s", CACHE_DIR)
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:

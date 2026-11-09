@@ -13,7 +13,7 @@ def send(handler, obj, status=200):
     handler.send_response(status)
     handler.send_header("Content-Type", "application/json; charset=utf-8")
     handler.send_header("Access-Control-Allow-Origin", "*")
-    handler.send_header("Cache-Control", "public, s-maxage=30, stale-while-revalidate=60")
+    handler.send_header("Cache-Control", "public, s-maxage=20, stale-while-revalidate=60")
     handler.send_header("Content-Length", str(len(body)))
     handler.end_headers()
     handler.wfile.write(body)
@@ -30,21 +30,22 @@ class handler(BaseHTTPRequestHandler):
             subpath = "/" + subpath
 
         if subpath == "/timeline":
-            service_filter = query.get("service", ["all"])[0]
-            data = server.get_timeline()
-            posts = data["posts"]
-            if service_filter != "all":
-                posts = [p for p in posts if p["service"] == service_filter]
-            send(self, {
-                "ok": True,
-                "fetchedAt": data["fetchedAt"],
-                "total": len(posts),
-                "allTotal": data["total"],
-                "serviceCounts": data["serviceCounts"],
-                "errors": data.get("errors") or {},
-                "services": server.SERVICES,
-                "posts": posts,
-            })
+            service = query.get("service", ["all"])[0]
+            before = query.get("before", [None])[0]
+            force = query.get("refresh", ["0"])[0] not in ("", "0", "false")
+            try:
+                limit = int(query.get("limit", [str(server.DEFAULT_LIMIT)])[0] or server.DEFAULT_LIMIT)
+            except Exception:
+                limit = server.DEFAULT_LIMIT
+            try:
+                result = server.timeline_page(before, limit, service, force=force)
+            except ValueError as e:
+                send(self, {"ok": False, "error": str(e)}, status=400)
+                return
+            except Exception:
+                send(self, {"ok": False, "error": "タイムラインを取得できませんでした"}, status=502)
+                return
+            send(self, result)
             return
 
         if subpath == "/user":
@@ -64,7 +65,11 @@ class handler(BaseHTTPRequestHandler):
             return
 
         if subpath == "/services":
-            send(self, {"ok": True, "services": server.SERVICES})
+            send(self, {"ok": True, "version": server.VERSION, "services": server.SERVICES})
+            return
+
+        if subpath == "/health":
+            send(self, server.health())
             return
 
         send(self, {"ok": False, "error": "not found"}, status=404)

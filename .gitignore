@@ -8,3 +8,6 @@ pitter/
 yudetter/
 misc/
 test_fetch.py
+check_api.py
+.cache/
+.cache-*/

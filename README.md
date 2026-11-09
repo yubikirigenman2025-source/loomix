@@ -5,6 +5,17 @@ Karotter / Yudetter / あめ→はれ / Pitter の公開タイムラインを、
 - 本番: https://loomix-z8wt.onrender.com
 - リポジトリ: https://github.com/yubikirigenman2025-source/loomix
 
+## v0.3 の変更
+
+- **無限スクロール**：一覧の底に近づくと `/api/timeline?before=<ISO8601|投稿ID>&limit=40` を1回だけ要求し、続きを差し込む。読み込み中は控えめな「読み込み中...」、履歴の終端では「これ以上はありません」を出す。
+- **相手先に負荷をかけない設計**
+  - **過去ログの永続アーカイブ**：一度取ったページは `.cache/{service}.jsonl` に追記して保持し、同じ過去範囲は外部APIを叩かず即返す。履歴の取得は「一生で1回」に近づく。
+  - **カーソルで続きから**：Karotter は `cursor`（`pagination.nextCursor`）、Yudetter は `cursor`、あめ→はれは `beforeSeq`、Pitter は `page`。取得位置を覚えておき、次はそこから1ページだけ進める。
+  - **レートリミット**：同一サービスへのリクエストは最低 0.5 秒間隔・毎分 60 回まで。同一サービスへの同時リクエストはロックで1本に絞る。
+  - **差分同期**：新着は最新ページから取り込み、既知の投稿に当たった時点で止める。
+  - **先読み**：次のページ分の余裕が減ったサービスだけ、裏で1ページだけ先に取る。
+- **欠けないマージ**：全サービスが指定時刻より古い範囲を「40件以上」持っていることを確かめてから返す。届いていないときは空ページ＋`partial` を返し、クライアントが少し待って再要求する（黙って投稿を飛ばさない）。
+
 ## v0.2 の変更
 
 - **取得深度を拡大**：karotter 100 / yudetter 100 / am-hr 80 / pitter 80 件（各サービスのカーソルでページを継ぎ足し）を取得し、UTC の深い時系列マージで表示。1回の更新で最大360件。
@@ -30,8 +41,10 @@ PORT=3000 python3 server.py
 
 | パラメータ | 内容 |
 |---|---|
+| `before` | この時刻より古い投稿を返す。ISO8601（`2026-11-09T20:00:00Z`）または投稿ID（Loomix の `id`／先方の `rawId`）。省略すると最新 |
+| `limit` | 返す件数（既定 40、最大 80） |
 | `service` | `all`（既定）/ `karotter` / `yudetter` / `amehare` / `pitter` |
-| `refresh` | `1` でキャッシュを無視して再取得 |
+| `refresh` | `1` で新着同期を強制（最短60秒の間隔は守る） |
 
 ```json
 {
@@ -65,9 +78,18 @@ PORT=3000 python3 server.py
       "isQuote": false,
       "metrics": { "likes": 0, "reposts": 0, "replies": 0, "views": 0 }
     }
-  ]
+  ],
+  "limit": 40,
+  "nextBefore": "2026-11-09T20:00:00Z",
+  "hasMore": true,
+  "partial": false,
+  "retryAfterMs": null,
+  "archiveCounts": { "karotter": 320, "yudetter": 120, "amehare": 80, "pitter": 60 }
 }
 ```
+
+- `nextBefore` を次の `before` に渡すと続きが取れる（省略すると最新）。
+- `partial: true` は「相手先の取得がまだ追いついていない」の意味。`retryAfterMs` だけ待って同じ `before` で再要求する。
 
 ### `GET /api/user?service=karotter&id=<username|userId|handle>`
 
@@ -92,16 +114,18 @@ PORT=3000 python3 server.py
 }
 ```
 
-### `GET /api/services` / `GET /api/health`
+### `GET /api/health`
+
+バージョン、アーカイブ件数、各サービスの探索床（`floor`）・終端・カーソルの有無、レート制限の設定を返す。
 
 ## サービス別の取得元
 
-| サービス | 取得元 | プロフィール | 本家URL |
-|---|---|---|---|
-| Karotter | `api.karotter.com/api/posts/recommended?limit=100&mode=latest` | `/api/users/{username}` ＋ `/api/users/{username}/posts` | `karotter.com/{username}` |
-| Yudetter | `/api/yudates?limit=50` ＋ `cursor` | `/api/users/{username}` ＋ `/api/users/{username}/yudates` | `yudetter.com/yudates/{id}` |
-| あめ→はれ | `/api/timeline?bucket=latest&limit=40` ＋ `beforeSeq` | `/api/users/{userId}?bucket=main` | `am-hr.com/posts/{id}` |
-| Pitter | `/system/Post.php?action=latest&page=1-4` | `/system/Post.php?action=profile&handle=` | `pitter.jp/?post={id}` |
+| サービス | 取得元 | ページング | プロフィール | 本家URL |
+|---|---|---|---|---|
+| Karotter | `api.karotter.com/api/posts/recommended?limit=40&mode=latest` | `cursor`（`pagination.nextCursor`） | `/api/users/{username}` ＋ `/api/users/{username}/posts` | `karotter.com/{username}` |
+| Yudetter | `/api/yudates?limit=40` | `cursor`（`nextCursor`） | `/api/users/{username}` ＋ `/api/users/{username}/yudates` | `yudetter.com/yudates/{id}` |
+| あめ→はれ | `/api/timeline?bucket=latest&limit=40` | `beforeSeq` | `/api/users/{userId}?bucket=main` | `am-hr.com/posts/{id}` |
+| Pitter | `/system/Post.php?action=latest&page=N`（20件/ページ） | `page` | `/system/Post.php?action=profile&handle=` | `pitter.jp/?post={id}` |
 
 - Karotter のフィードは数値IDのみを返し、本家のパーマリンク（`p_xxxxx`）は公開APIから引けないため、カードのリンクは投稿者のプロフィールへ送っている。
 - Pitter の画像・アイコンは相対パス（`system/icon_image/...`）で返るため、`https://pitter.jp/` を補っている。
@@ -123,4 +147,6 @@ work/loomix/
 
 - 各SNSの内部APIは非公開仕様のため、先方のUI改修で取得が壊れうる。`/api/timeline` の `errors` と `/api/health` で検知する。
 - Pitter は Cloudflare のマネージドチャレンジが断続的に出る。失敗時は他3サービスで継続する。
-- 取得件数はサービスごとの投稿頻度に比例するため、深夜などは Karotter が多くを占める（05:00時点で karotter 100件＝約3時間分、yudetter 100件＝約2日分）。
+- Karotter の一覧には、古い投稿のリポストが日付だけ古く混ざることがある。探索済みの床より下のものは表示せず、その時代まで読み進めたときに出す（ページの下端が飛ばないように）。
+- アーカイブは `.cache/` に保存する。Render の無料プランは再起動・再デプロイでディスクが消えるため、そのときは初回 100/100/80/80 件から取り直す。
+- 深く読むほど、全サービスの同じ時間帯を読む必要がある。Karotter は1ページ＝約1〜2時間、遅いサービスは1ページ数日〜数週間なので、深いほど先読みが効く。
