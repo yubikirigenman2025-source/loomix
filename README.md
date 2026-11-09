@@ -59,6 +59,7 @@ PORT=3000 python3 server.py
       "media": ["https://..."],
       "createdAt": "2026-11-09T20:04:05.857Z",
       "url": "https://karotter.com/Sophie_twilight",
+      "linkLabel": "投稿者ページ",
       "isReply": false,
       "replyTo": null,
       "isQuote": false,
