@@ -160,6 +160,7 @@ function render() {
   if (!list.length) {
     feedEl.innerHTML = "";
     emptyEl.hidden = false;
+    emptyEl.innerHTML = "該当する投稿がありません";
     endEl.hidden = true;
     return;
   }
@@ -214,7 +215,7 @@ function updateTabs() {
 
 /* ------------------------------------------------------------ data */
 
-async function loadTimeline(force = false) {
+async function loadTimeline(force = false, isRetry = false) {
   if (state.loading) return;
   state.loading = true;
   refreshBtn.classList.add("is-busy");
@@ -234,13 +235,20 @@ async function loadTimeline(force = false) {
     render();
     lastLoad = Date.now();
   } catch (err) {
-    if (!state.posts.length) {
-      feedEl.innerHTML = "";
-      emptyEl.hidden = false;
-      emptyEl.textContent = "タイムラインを取得できませんでした";
-      statusEl.textContent = "接続エラー";
-    }
     console.error("timeline", err);
+    if (!state.posts.length) {
+      if (!isRetry) {
+        // Render の無料プランは休止からの復帰に時間がかかるため、一度だけ自動で再試行する
+        statusEl.textContent = "接続しています";
+        setTimeout(() => loadTimeline(true, true), 3000);
+      } else {
+        feedEl.innerHTML = "";
+        emptyEl.hidden = false;
+        emptyEl.innerHTML = `<p>タイムラインを取得できませんでした</p>
+          <button class="more" id="retryBtn" type="button" style="margin-top:14px">再試行</button>`;
+        statusEl.textContent = "接続エラー";
+      }
+    }
   } finally {
     state.loading = false;
     refreshBtn.classList.remove("is-busy");
@@ -492,6 +500,10 @@ function handleProfileTarget(target) {
 }
 
 document.addEventListener("click", (e) => {
+  if (e.target.id === "retryBtn") {
+    loadTimeline(true, true);
+    return;
+  }
   if (handleProfileTarget(e.target.closest("[data-profile]"))) {
     e.preventDefault();
     e.stopPropagation();
