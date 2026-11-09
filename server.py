@@ -673,13 +673,13 @@ def json_bytes(obj):
 
 class LoomixHandler(SimpleHTTPRequestHandler):
     server_version = "Loomix/0.2"
+    _static_cache = None
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=PUBLIC_DIR, **kwargs)
-        self._static_cache = None
 
     def end_headers(self):
-        if self._static_cache:
+        if getattr(self, "_static_cache", None):
             self.send_header("Cache-Control", self._static_cache)
         super().end_headers()
 
