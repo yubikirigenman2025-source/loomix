@@ -130,6 +130,7 @@ def make_post(**kw):
         "media": [m for m in (kw.get("media") or []) if m],
         "createdAt": kw.get("createdAt"),
         "url": kw.get("url") or kw.get("profileUrl") or "",
+        "linkLabel": kw.get("linkLabel") or "本家で開く",
         "isReply": bool(kw.get("isReply")),
         "replyTo": kw.get("replyTo") or None,
         "isQuote": bool(kw.get("isQuote")),
@@ -178,6 +179,7 @@ def karotter_post(p):
         createdAt=iso_z(parse_iso(p.get("createdAt"))) if parse_iso(p.get("createdAt")) else None,
         # 数値IDからは本家のパーマリンク（p_xxxxx）を引けないため、プロフィールへ送る
         url=profile_url,
+        linkLabel="投稿者ページ",
         isReply=bool(p.get("parentId")),
         replyTo=reply_to,
         isQuote=bool(p.get("quotedPostId")),

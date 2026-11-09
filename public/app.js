@@ -140,7 +140,7 @@ function postMarkup(post) {
       ${mediaMarkup(post)}
       <div class="post-foot">
         ${countsMarkup(post)}
-        <a class="origin" href="${esc(post.url)}" target="_blank" rel="noopener noreferrer">本家で開く</a>
+        <a class="origin" href="${esc(post.url)}" target="_blank" rel="noopener noreferrer">${esc(post.linkLabel || "本家で開く")}</a>
       </div>
     </div>
   </article>`;
