@@ -853,10 +853,14 @@ def sync_newest(force=False):
 # ---------------------------------------------------------------- タイムライン
 
 
-def _sids(service):
+def _sids(service, allowed=None):
+    if allowed is not None:
+        target = [s for s in SERVICE_IDS if s in allowed]
+    else:
+        target = list(SERVICE_IDS)
     if service in (None, "", "all"):
-        return list(SERVICE_IDS)
-    return [service]
+        return target
+    return [service] if service in target else []
 
 
 def _merged(posts):
@@ -927,8 +931,10 @@ def resolve_before(raw):
     return None
 
 
-def newest_page(limit, service):
-    sids = _sids(service)
+def newest_page(limit, service, allowed=None):
+    sids = _sids(service, allowed=allowed)
+    if not sids:
+        return [], None
     posts = []
     for sid in sids:
         posts.extend(ARCHIVE[sid].newest(limit))
@@ -937,14 +943,16 @@ def newest_page(limit, service):
     return posts, next_ts
 
 
-def older_page(ts, limit, service):
+def older_page(ts, limit, service, allowed=None):
     """ts より古い投稿を limit 件。足りなければアーカイブを必要な分だけ伸ばす。
 
     全サービスが ts より古い範囲を漏れなく持っていないと、欠けた投稿を
     黙って飛ばすことになる。その場合は空ページ＋partial を返し、
     クライアントに少し待って再要求させる（次回は続きから伸ばせる）。
     """
-    sids = _sids(service)
+    sids = _sids(service, allowed=allowed)
+    if not sids:
+        return [], False
     deadline = time.time() + REQUEST_BUDGET_SEC
     for _ in range(MAX_ROUNDS):
         missing = [sid for sid in sids if not ARCHIVE[sid].reserve_ok(ts, limit)]
@@ -992,26 +1000,45 @@ def prefetch(sids, ts, limit):
     threading.Thread(target=run, daemon=True).start()
 
 
-def timeline_page(before_raw, limit, service, force=False):
+def timeline_page(before_raw, limit, service, force=False, allowed=None):
     ensure_archive()
     limit = max(1, min(int(limit or DEFAULT_LIMIT), MAX_LIMIT))
     if service not in (None, "", "all") and service not in SERVICE_BY_ID:
         raise ValueError("unknown service")
 
-    sids = _sids(service)
+    sids = _sids(service, allowed=allowed)
+    if not sids:
+        return {
+            "ok": True,
+            "version": VERSION,
+            "fetchedAt": iso_z(datetime.now(timezone.utc)),
+            "total": 0,
+            "allTotal": 0,
+            "serviceCounts": {sid: 0 for sid in SERVICE_IDS},
+            "archiveCounts": {sid: len(ARCHIVE[sid]) for sid in SERVICE_IDS},
+            "errors": {},
+            "services": [],
+            "posts": [],
+            "limit": limit,
+            "nextBefore": None,
+            "hasMore": False,
+            "partial": False,
+            "linkedServices": list(allowed or []),
+        }
+
     sync_newest(force=force)
 
     if before_raw:
         ts = resolve_before(before_raw)
         if ts is None:
             raise ValueError("before を解釈できません（ISO8601 か投稿IDを指定してください）")
-        posts, partial = older_page(ts, limit, service)
+        posts, partial = older_page(ts, limit, service, allowed=allowed)
         next_ts = parse_iso(posts[-1].get("createdAt")) if posts else ts
         has_more = _has_more(sids, next_ts)
         if posts and not partial:
             prefetch(sids, next_ts, limit)
     else:
-        posts, next_ts = newest_page(limit, service)
+        posts, next_ts = newest_page(limit, service, allowed=allowed)
         partial = False
         has_more = _has_more(sids, next_ts)
         if posts:
@@ -1032,6 +1059,7 @@ def timeline_page(before_raw, limit, service, force=False):
         "nextBefore": iso_z(next_ts) if next_ts else None,
         "hasMore": has_more,
         "partial": partial,
+        "linkedServices": list(allowed or []),
         "retryAfterMs": 1200 if (partial and not posts) else None,
     }
 
@@ -1287,6 +1315,7 @@ def api_dispatch(method, path, query, body, headers, client_ip=""):
     # -- 認証状態（任意連携） -------------
 
     gate = auth.status(token)
+    linked_services = set((gate.get("linked") or {}).keys())
 
     if path == "/api/timeline":
         service = qget("service", "all")
@@ -1297,7 +1326,7 @@ def api_dispatch(method, path, query, body, headers, client_ip=""):
             limit = DEFAULT_LIMIT
         before = qget("before")
         try:
-            result = timeline_page(before, limit, service, force=force)
+            result = timeline_page(before, limit, service, force=force, allowed=linked_services)
         except ValueError as e:
             return 400, {"ok": False, "error": str(e)}, "no-store"
         except Exception as e:  # noqa: BLE001

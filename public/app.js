@@ -11,7 +11,6 @@ const TOKEN_KEY = "loomix.session";
 
 const ROUTES = {
   home: "ホーム",
-  accounts: "連携アカウント",
   profile: "プロフィール",
   settings: "設定",
 };
@@ -49,9 +48,7 @@ const linkList = document.getElementById("linkList");
 const sideUser = document.getElementById("sideUser");
 const topTitle = document.getElementById("topTitle");
 const topTools = document.getElementById("topTools");
-const filtersEl = document.getElementById("filters");
 const viewHome = document.getElementById("view-home");
-const viewAccounts = document.getElementById("view-accounts");
 const viewProfile = document.getElementById("view-profile");
 const viewSettings = document.getElementById("view-settings");
 
@@ -347,11 +344,13 @@ async function submitLink(form) {
 
     if (inApp) {
       renderSideUser();
-      if (state.route === "accounts") renderAccounts();
+      if (state.route === "settings") renderSettings();
       if (state.route === "profile") renderProfilePage();
     } else {
       openApp();
     }
+    resetTimeline();
+    loadFirstPage({ force: true });
   } catch (err) {
     if (err.message === "auth_required") return;
     if (errorEl) errorEl.textContent = err.message || "連携できませんでした";
@@ -373,9 +372,11 @@ async function unlink(service) {
     state.auth = data.auth;
     if (data.token !== undefined) setToken(data.token);
     renderSideUser();
-    renderAccounts();
+    if (state.route === "settings") renderSettings();
     if (state.route === "profile") renderProfilePage();
     toast(`${providerName(service)}の連携を解除しました`);
+    resetTimeline();
+    loadFirstPage({ force: true });
   } catch (err) {
     if (err.message !== "auth_required") toast(err.message || "解除できませんでした");
   }
@@ -397,9 +398,11 @@ async function logout() {
     try { await loadStatus(); } catch (err) { state.auth = null; }
   }
   renderSideUser();
-  if (state.route === "accounts") renderAccounts();
+  if (state.route === "settings") renderSettings();
   if (state.route === "profile") renderProfilePage();
   toast("ログアウトしました");
+  resetTimeline();
+  loadFirstPage({ force: true });
 }
 
 /* ------------------------------------------------------------ app shell */
@@ -434,10 +437,10 @@ function renderSideUser() {
       <div class="su-row">
         <div>
           <div class="su-name">ゲスト（未連携）</div>
-          <div class="su-label">0 / ${total} 連携</div>
+          <div class="su-label">0 / ${total} 連携中</div>
         </div>
       </div>
-      <a class="side-link-cta" href="#/accounts">アカウントを連携</a>
+      <a class="side-link-cta" href="#/settings">設定で連携する</a>
     `;
   } else {
     sideUser.innerHTML = `
@@ -448,10 +451,8 @@ function renderSideUser() {
           <div class="su-label">${linked.length} / ${total} 連携中</div>
         </div>
       </div>
-      <button class="side-logout" id="sideLogout" type="button">ログアウト</button>
+      <a class="side-link-cta" href="#/settings" style="background:#161616;border-color:#2a2a2a;font-size:11.5px">設定で管理</a>
     `;
-    const btn = document.getElementById("sideLogout");
-    if (btn) btn.addEventListener("click", logout);
   }
 }
 
@@ -461,24 +462,28 @@ function route() {
     showGate();
     return;
   }
+  if (raw === "accounts" || raw === "link") {
+    location.hash = "#/settings";
+    return;
+  }
   const name = ROUTES[raw] ? raw : "home";
   state.route = name;
 
   gateEl.hidden = true;
   appEl.hidden = false;
 
-  const views = { home: viewHome, accounts: viewAccounts, profile: viewProfile, settings: viewSettings };
-  Object.keys(views).forEach((key) => { views[key].hidden = key !== name; });
+  const views = { home: viewHome, profile: viewProfile, settings: viewSettings };
+  Object.keys(views).forEach((key) => {
+    if (views[key]) views[key].hidden = key !== name;
+  });
 
   document.querySelectorAll("[data-route]").forEach((el) => {
     el.classList.toggle("is-active", el.dataset.route === name);
   });
 
   topTitle.textContent = ROUTES[name];
-  filtersEl.hidden = name !== "home";
   topTools.hidden = name !== "home";
 
-  if (name === "accounts") renderAccounts();
   if (name === "profile") renderProfilePage();
   if (name === "settings") renderSettings();
   if (name === "home" && !state.posts.length && !state.loadingFirst) loadFirstPage();
@@ -487,24 +492,6 @@ function route() {
 }
 
 /* ------------------------------------------------------------ pages */
-
-function renderAccounts() {
-  const auth = state.auth;
-  if (!auth) return;
-  const providers = Object.keys(auth.providers || {});
-  const linked = Object.keys(auth.linked || {}).length;
-  const total = providers.length;
-
-  viewAccounts.innerHTML = `
-    <div class="page-head">
-      <h2>連携アカウント</h2>
-      <p>${linked} / ${total} 連携中。アカウントの連携は任意です。連携したアカウントの情報はブラウザに安全に保持され、いつでも追加・解除できます。</p>
-    </div>
-    <div class="page-body">
-      <div class="link-list">${providers.map((s) => linkCard(s, true)).join("")}</div>
-    </div>
-  `;
-}
 
 function profileCard(acc) {
   const spec = providerSpec(acc.service);
@@ -577,8 +564,8 @@ function renderProfilePage() {
         <p>アカウントが連携されていません。</p>
       </div>
       <div class="page-body">
-        <p style="color:var(--fg-3);font-size:12px;margin-bottom:16px">「連携アカウント」からお持ちのSNSアカウントを連携すると、ここにプロフィールや統計情報が表示されます。</p>
-        <a class="cta" href="#/accounts" style="display:inline-block">アカウントを連携する</a>
+        <p style="color:var(--fg-3);font-size:12px;margin-bottom:16px">「設定」からお持ちのSNSアカウントを連携すると、ここにプロフィールや統計情報が表示されます。</p>
+        <a class="cta" href="#/settings" style="display:inline-block">設定でアカウントを連携する</a>
       </div>
     `;
     return;
@@ -599,16 +586,24 @@ function renderSettings() {
   const auth = state.auth;
   if (!auth) return;
   const session = auth.session || {};
+  const providers = Object.keys(auth.providers || {});
   const linked = Object.keys(auth.linked || {}).length;
-  const required = (auth.required || []).length;
+  const total = providers.length;
 
   viewSettings.innerHTML = `
     <div class="page-head">
       <h2>設定</h2>
-      <p>表示とセッションの設定です。</p>
+      <p>アカウントの連携管理と表示設定です。</p>
     </div>
     <div class="page-body">
       <div class="set-group">
+        <h3 class="set-section-title">連携アカウント（${linked} / ${total}）</h3>
+        <p class="set-section-desc">連携したSNSの投稿だけがタイムラインに流れます。未連携のSNSの投稿は表示されません。パスワードは保存されません。</p>
+        <div class="link-list" style="margin-top:16px">${providers.map((s) => linkCard(s, true)).join("")}</div>
+      </div>
+
+      <div class="set-group" style="margin-top:32px">
+        <h3 class="set-section-title">表示設定</h3>
         <div class="set-row">
           <div><div class="k">自動更新</div><div class="d">60秒ごとに新着を読み込みます。</div></div>
           <label class="auto"><input type="checkbox" id="setAuto" ${state.autoRefresh ? "checked" : ""}><span class="box" aria-hidden="true"></span></label>
@@ -619,11 +614,9 @@ function renderSettings() {
         </div>
       </div>
 
-      <div class="set-group" style="margin-top:22px">
-        <div class="set-row">
-          <div><div class="k">連携アカウント</div><div class="d">${linked} / ${required} 連携中</div></div>
-          <a class="btn" href="#/accounts">管理</a>
-        </div>
+      ${linked > 0 ? `
+      <div class="set-group" style="margin-top:32px">
+        <h3 class="set-section-title">セッション</h3>
         <div class="set-row">
           <div><div class="k">連携を始めた日時</div></div>
           <span class="v">${session.createdAt ? esc(fullTime(session.createdAt)) : "—"}</span>
@@ -633,10 +626,10 @@ function renderSettings() {
           <span class="v">${session.expiresAt ? esc(fullTime(session.expiresAt)) : "—"}</span>
         </div>
         <div class="set-row">
-          <div><div class="k">ログアウト</div><div class="d">連携をすべて外してトップに戻ります。</div></div>
+          <div><div class="k">ログアウト</div><div class="d">連携をすべて外して初期状態に戻します。</div></div>
           <button class="btn" id="settingsLogout" type="button">ログアウト</button>
         </div>
-      </div>
+      </div>` : ""}
 
       <p class="set-note">
         Loomix 0.4 ・ パスワードは保存していません。連携を解除するとLoomix側の記録も消えます。<br>
@@ -880,6 +873,26 @@ async function loadFirstPage({ force = false } = {}) {
     updateCounts();
     updateStatus();
     renderAll();
+
+    const linkedCount = Object.keys((state.auth && state.auth.linked) || {}).length;
+    if (linkedCount === 0) {
+      feedEl.innerHTML = "";
+      emptyEl.hidden = false;
+      emptyEl.innerHTML = `
+        <div class="empty-box" style="padding:56px 20px;text-align:center">
+          <p style="font-size:16px;font-weight:600;color:#eee;margin-bottom:8px">連携しているSNSがありません</p>
+          <p style="font-size:12.5px;color:var(--fg-4);line-height:1.7;max-width:380px;margin:0 auto 24px">
+            未連携のSNSの投稿はタイムラインに流れません。<br>
+            「設定」からお持ちのSNSアカウントを連携すると、ここに統合タイムラインが表示されます。
+          </p>
+          <a class="cta" href="#/settings" style="display:inline-block;padding:11px 22px;font-size:13.5px">設定でアカウントを連携する</a>
+        </div>
+      `;
+    } else if (data.posts && data.posts.length === 0) {
+      feedEl.innerHTML = "";
+      emptyEl.hidden = false;
+      emptyEl.innerHTML = `<p style="padding:40px 0;text-align:center;color:var(--fg-3);font-size:13px">連携中のSNSにまだ投稿がありません</p>`;
+    }
   } catch (err) {
     if (err.message === "auth_required") return;
     console.error("timeline", err);
