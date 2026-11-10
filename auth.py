@@ -4,8 +4,10 @@ Loomix 連携認証 (v0.4)
 
 - 各SNSのログイン画面と同じ経路で、その人のアカウントの資格情報を検証する。
 - パスワードは検証にだけ使い、保存しない（メモリにも残さない）。
-- 成功したら Loomix のセッショントークン（HMAC 署名）を発行し、
-  「どのSNSの・どのアカウントを・いつ連携したか」だけをディスクに残す。
+- 成功したら Loomix のセッショントークン（HMAC 署名）を発行する。
+  「どのSNSの・どのアカウントを・いつ連携したか」はトークン自身に入れて
+  ブラウザに持たせ、サーバーには何も残さない（再起動でディスクが消える環境でも
+  ログイン状態が続くように）。
 - タイムラインは、必要なSNSすべての連携が揃うまで開かない（ゲート）。
 
 各SNSの認証仕様（実測）:
@@ -356,17 +358,23 @@ VERIFIERS = {
 
 
 # ---------------------------------------------------------------- セッション
+#
+# サーバー側にセッションを持たない。トークン自体に「どのSNSを・どのアカウントで
+# 連携したか」を入れ、HMAC で署名する。Render の無料プランは再起動・スピンダウンで
+# ディスクが消えるため、状態をディスクに置くと15分の無操作で連携が失われてしまう。
+
+import base64
+
+SESSION_TTL_SEC = 60 * 60 * 24 * 60          # 60日（連携のたびに延長）
 
 _CACHE_DIR = None
 _lock = threading.RLock()
-_sessions = {}
 _attempts = {}
 _secret = None
-_loaded = False
 
 
 def configure(cache_dir):
-    """server.py から呼ぶ。キャッシュ先を auth と共有する。"""
+    """server.py から呼ぶ。署名鍵の退避先を auth と共有する。"""
     global _CACHE_DIR
     _CACHE_DIR = cache_dir
 
@@ -378,10 +386,6 @@ def _dir():
     d = os.path.join(tempfile.gettempdir(), "loomix-auth")
     os.makedirs(d, exist_ok=True)
     return d
-
-
-def _sessions_path():
-    return os.path.join(_dir(), "sessions.json")
 
 
 def _secret_path():
@@ -415,86 +419,63 @@ def _get_secret():
     return _secret
 
 
-def _sign(sid):
-    return hmac.new(_get_secret(), sid.encode("utf-8"), hashlib.sha256).hexdigest()[:40]
+def _b64(raw):
+    return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
 
 
-def _new_token():
-    sid = secrets.token_urlsafe(24)
-    with _lock:
-        now = time.time()
-        _sessions[sid] = {"createdAt": now, "seenAt": now, "services": {}}
-        _save_locked()
-    return sid + "." + _sign(sid)
+def _unb64(text):
+    return base64.urlsafe_b64decode(text + "=" * (-len(text) % 4))
 
 
-def _parse_token(token):
+def _sign(body):
+    return hmac.new(_get_secret(), body.encode("ascii"), hashlib.sha256).hexdigest()[:40]
+
+
+def _encode(claims):
+    raw = json.dumps(claims, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    body = _b64(raw)
+    return "lx1.%s.%s" % (body, _sign(body))
+
+
+def _decode(token):
+    """トークンを検証して claims を返す。無効・期限切れは None。"""
     if not token or not isinstance(token, str):
         return None
-    token = token.strip()
-    if len(token) > 200 or "." not in token:
+    parts = token.strip().split(".")
+    if len(parts) != 3 or parts[0] != "lx1":
         return None
-    sid, sig = token.rsplit(".", 1)
-    if not re.match(r"^[A-Za-z0-9_-]{16,64}$", sid):
+    body, sig = parts[1], parts[2]
+    if not body or len(body) > 4000:
         return None
-    if not hmac.compare_digest(sig, _sign(sid)):
+    if not hmac.compare_digest(sig, _sign(body)):
         return None
-    return sid
-
-
-def _load():
-    global _loaded
-    with _lock:
-        if _loaded:
-            return
-        _loaded = True
-        path = _sessions_path()
-        if not os.path.exists(path):
-            return
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                saved = json.load(f)
-            sessions = (saved or {}).get("sessions") or {}
-            now = time.time()
-            for sid, sess in sessions.items():
-                if not isinstance(sess, dict):
-                    continue
-                if now - float(sess.get("seenAt") or 0) > SESSION_TTL_SEC:
-                    continue
-                _sessions[sid] = sess
-            logging.info("auth sessions loaded: %d", len(_sessions))
-        except Exception as e:  # noqa: BLE001
-            logging.warning("session load failed: %s", e)
-
-
-def _save_locked():
-    path = _sessions_path()
     try:
-        tmp = path + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump({"version": 1, "sessions": _sessions}, f, ensure_ascii=False)
-        os.replace(tmp, path)
-    except Exception as e:  # noqa: BLE001
-        logging.warning("session save failed: %s", e)
+        claims = json.loads(_unb64(body).decode("utf-8"))
+    except Exception:
+        return None
+    if not isinstance(claims, dict) or claims.get("v") != 1:
+        return None
+    if float(claims.get("exp") or 0) < time.time():
+        return None
+    services = claims.get("services")
+    if not isinstance(services, dict):
+        return None
+    claims["services"] = {k: v for k, v in services.items() if k in AUTH_SPECS and isinstance(v, dict)}
+    return claims
 
 
-def _session(token, touch=False):
-    _load()
-    sid = _parse_token(token)
-    if not sid:
-        return None, None
-    with _lock:
-        sess = _sessions.get(sid)
-        if not sess:
-            return None, None
-        now = time.time()
-        if now - float(sess.get("seenAt") or 0) > SESSION_TTL_SEC:
-            _sessions.pop(sid, None)
-            _save_locked()
-            return None, None
-        if touch:
-            sess["seenAt"] = now
-        return sid, sess
+def _new_claims(services=None, created=None):
+    now = int(time.time())
+    return {
+        "v": 1,
+        "iat": int(created or now),
+        "exp": now + SESSION_TTL_SEC,
+        "services": services or {},
+    }
+
+
+def _iso(ts):
+    return datetime.fromtimestamp(float(ts), timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 # ---------------------------------------------------------------- レート制限
@@ -517,7 +498,6 @@ def _check_rate(ip):
 def bearer_token(headers):
     if not headers:
         return ""
-    value = ""
     try:
         value = headers.get("Authorization") or ""
     except Exception:
@@ -538,33 +518,38 @@ def _public_identity(item):
     }
 
 
-def status(token):
-    _sid, sess = _session(token, touch=True)
+def _status_for(claims):
     required = required_services()
-    linked = (sess or {}).get("services") or {}
-    linked_public = {sid: _public_identity(v) for sid, v in linked.items() if sid in AUTH_SPECS}
-    missing = [sid for sid in required if sid not in linked_public]
+    linked = {}
+    if claims:
+        for sid, item in (claims.get("services") or {}).items():
+            public = _public_identity(item)
+            public["service"] = sid
+            linked[sid] = public
+    missing = [sid for sid in required if sid not in linked]
     session_info = None
-    if sess:
-        created = datetime.fromtimestamp(float(sess.get("createdAt") or 0), timezone.utc)
-        expires = datetime.fromtimestamp(float(sess.get("seenAt") or 0) + SESSION_TTL_SEC, timezone.utc)
+    if claims:
         session_info = {
-            "createdAt": created.isoformat().replace("+00:00", "Z"),
-            "expiresAt": expires.isoformat().replace("+00:00", "Z"),
+            "createdAt": _iso(claims.get("iat")),
+            "expiresAt": _iso(claims.get("exp")),
         }
     return {
         "ok": True,
         "version": VERSION,
-        "authenticated": bool(sess),
-        "gateOpen": bool(sess) and not missing,
+        "authenticated": bool(claims),
+        "gateOpen": bool(claims) and not missing,
         "required": required,
-        "linked": linked_public,
+        "linked": linked,
         "missing": missing,
-        "progress": {"linked": len([s for s in required if s in linked_public]),
+        "progress": {"linked": len([s for s in required if s in linked]),
                      "required": len(required)},
         "session": session_info,
         "providers": {sid: AUTH_SPECS[sid] for sid in SERVICE_ORDER},
     }
+
+
+def status(token):
+    return _status_for(_decode(token))
 
 
 def login(payload, token="", client_ip=""):
@@ -584,53 +569,37 @@ def login(payload, token="", client_ip=""):
         if field["type"] != "password":
             value = value.strip()
         if not value:
-            raise AuthError("%sの「%s」を入力してください。" % (spec["title"], field["label"]), 400, "missing_field")
+            raise AuthError("%sの「%s」を入力してください。" % (spec["title"], field["label"]),
+                            400, "missing_field")
         creds[key] = value
 
     identity = VERIFIERS[service](creds)
 
-    _load()
-    with _lock:
-        sid = _parse_token(token)
-        sess = _sessions.get(sid) if sid else None
-        if sess is None:
-            new_token = _new_token()
-            sid = _parse_token(new_token)
-            sess = _sessions[sid]
-        else:
-            new_token = None
-        sess["services"][service] = identity
-        sess["seenAt"] = time.time()
-        _save_locked()
-        if new_token is None:
-            new_token = sid + "." + _sign(sid)
+    current = _decode(token)
+    services = dict((current or {}).get("services") or {})
+    services[service] = identity
+    claims = _new_claims(services, created=(current or {}).get("iat"))
+    new_token = _encode(claims)
 
     logging.info("auth linked: service=%s handle=%s", service, identity.get("handle"))
     return {"token": new_token, "service": service, "account": _public_identity(identity),
-            "auth": status(new_token)}
+            "auth": _status_for(claims)}
 
 
 def unlink(token, service):
-    sid, sess = _session(token)
-    if not sess:
+    claims = _decode(token)
+    if not claims:
         raise AuthError("連携が見つかりません。もう一度ログインしてください。", 401, "auth_required")
     if service not in AUTH_SPECS:
         raise AuthError("連携するSNSを選んでください。", 400, "bad_service")
-    with _lock:
-        sess.get("services", {}).pop(service, None)
-        if not sess.get("services"):
-            _sessions.pop(sid, None)
-            _save_locked()
-            return {"auth": status("")}
-        sess["seenAt"] = time.time()
-        _save_locked()
-    return {"auth": status(token)}
+    services = dict(claims.get("services") or {})
+    services.pop(service, None)
+    if not services:
+        return {"token": "", "auth": _status_for(None)}
+    new_token = _encode(_new_claims(services, created=claims.get("iat")))
+    return {"token": new_token, "auth": _status_for(_decode(new_token))}
 
 
 def logout(token):
-    sid, _sess = _session(token)
-    with _lock:
-        if sid:
-            _sessions.pop(sid, None)
-            _save_locked()
+    """資格情報を持たないのでサーバー側で消すものは無い（ブラウザがトークンを捨てる）。"""
     return {"ok": True}

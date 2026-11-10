@@ -365,7 +365,7 @@ async function unlink(service) {
       body: JSON.stringify({ service }),
     });
     state.auth = data.auth;
-    if (!data.auth.authenticated) setToken("");
+    if (data.token !== undefined) setToken(data.token);
     if (!data.auth.gateOpen) {
       resetTimeline();
       showGate("連携を解除しました。4つすべてを連携するとタイムラインが開きます。");

@@ -19,8 +19,8 @@ Karotter / Yudetter / あめ→はれ / Pitter のタイムラインを、ひと
   | あめ→はれ | `POST https://am-hr.com/api/auth/login`（`Origin: https://am-hr.com` 必須） | ユーザーIDまたはメール＋パスワード |
   | Pitter | `POST https://pitter.jp/system/openAPI.php?action=login` → `action=me` | メール＋パスワード＋APIキー（64桁hex） |
 
-- **パスワードは保存しない**。検証に使うだけで、ディスクにもメモリにも残さない。保存するのは「どのSNSの・どのアカウントと・いつ連携したか」だけ（`.cache/sessions.json`）。
-- Loomix のセッションは HMAC 署名トークン（`<id>.<sig>`、30日・使うたびに延長）。ブラウザは localStorage にトークンだけを持つ。
+- **パスワードは保存しない**。検証に使うだけで、ディスクにもメモリにも残さない。
+- 連携状況は **HMAC 署名したトークン**（`lx1.<claims>.<sig>`、60日）としてブラウザの localStorage にだけ置く。サーバーにセッションストアを持たないので、再デプロイや Free プランのスピンダウンでもログイン状態が残る（署名鍵 `LOOMIX_SESSION_SECRET` を固定した場合。未設定なら再起動で無効になり再連携）。
 - `/api/timeline` と `/api/user` は連携が揃うまで **401 `auth_required`**。ゲートを通過できないとデータは取れない。
 - 運用で必要なSNSだけにしたい場合は環境変数 `LOOMIX_AUTH_REQUIRED=karotter,pitter` のように指定する（既定は4つすべて）。署名鍵は `LOOMIX_SESSION_SECRET`、未指定なら `.cache/session-secret` を自動生成。
 
@@ -186,5 +186,6 @@ work/loomix/
 - アーカイブは `.cache/` に保存する。Render の無料プランは再起動・再デプロイでディスクが消えるため、そのときは初回 100/100/80/80 件から取り直す。
 - 深く読むほど、全サービスの同じ時間帯を読む必要がある。Karotter は1ページ＝約1〜2時間、遅いサービスは1ページ数日〜数週間なので、深いほど先読みが効く。
 - 連携認証も各SNSの非公開ログイン経路を使う。先方がログイン仕様（項目名・Origin検査・APIキー）を変えると、そのSNSだけ「連携できません」と表示される。`/api/auth/status` の `providers` と各ログイン失敗メッセージで検知する。
-- セッションは `.cache/sessions.json` に置く。Render の無料プランは再デプロイでディスクが消えるため、そのときは再連携が必要（パスワードを保存しない設計の帰結）。
+- 署名鍵は環境変数 `LOOMIX_SESSION_SECRET` に置く（未設定なら `.cache/session-secret` を自動生成。Render の無料プランは再起動でディスクが消えるため、その場合はトークンが無効になり再連携が必要）。
+- ログアウト・連携解除はブラウザのトークンを破棄する。サーバーは資格情報を持たないので、発行済みの古いトークンは期限まで有効（ゲートは公開情報の入口を整える仕組みで、秘密の保護境界ではない）。
 - ログイン試行は同一IPあたり5分で15回までに制限している（`X-Forwarded-For` の先頭を使用）。
