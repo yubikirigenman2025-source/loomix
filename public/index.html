@@ -4,74 +4,184 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#000000">
-<meta name="description" content="Karotter / Yudetter / あめ→はれ / Pitter の公開タイムラインをひとつの流れに。">
+<meta name="description" content="Karotter / Yudetter / あめ→はれ / Pitter のタイムラインをひとつの流れに。">
 <title>Loomix</title>
-<link rel="stylesheet" href="style.css?v=030">
+<link rel="stylesheet" href="style.css?v=040">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' fill='%23000'/%3E%3Cpath d='M14 20h36M14 32h36M14 44h36' stroke='%23bbb' stroke-width='2'/%3E%3C/svg%3E">
 </head>
 <body>
-<div class="app">
 
-  <header class="top">
-    <div class="top-inner">
-    <div class="brand">
+<!-- ================================================================ トップ（ゲート） -->
+<div class="gate" id="gate" hidden>
+  <div class="gate-wrap">
+
+    <header class="gate-head">
+      <div class="brand">
+        <span class="brand-name">Loomix</span>
+        <span class="brand-ver">0.4</span>
+      </div>
+      <span class="gate-tag">国産SNS統合ブリッジ</span>
+    </header>
+
+    <section class="hero">
+      <h1>4つのSNSを、<br>ひとつの流れに。</h1>
+      <p class="hero-lead">
+        Karotter / Yudetter / あめ→はれ / Pitter のタイムラインを、
+        時系列でひとつに織り交ぜるリーダーです。
+      </p>
+      <p class="hero-lead">
+        すべてのSNSに<em>自分のアカウントで</em>連携すると、統合タイムラインが開きます。
+      </p>
+      <div class="hero-actions">
+        <a class="cta" href="#link" id="startBtn">アカウントを連携してはじめる</a>
+        <span class="hero-progress"><span id="gateCount">0 / 4</span> 連携済み</span>
+      </div>
+      <p class="gate-notice" id="gateNotice" hidden></p>
+    </section>
+
+    <section class="hero-points" aria-label="Loomixでできること">
+      <div><span class="hp-k">統合</span><span class="hp-v">4つのタイムラインを時系列でひとつに</span></div>
+      <div><span class="hp-k">自分の目で</span><span class="hp-v">返信除外・画像拡大・無限スクロール</span></div>
+      <div><span class="hp-k">読み取り専用</span><span class="hp-v">投稿は各SNSのまま、Loomixは読むだけ</span></div>
+    </section>
+
+    <section class="link-section" id="link">
+      <div class="link-section-head">
+        <h2>アカウントの連携</h2>
+        <p>4つすべての連携が揃うとタイムラインが開きます。</p>
+      </div>
+      <div class="link-list" id="linkList" aria-live="polite"></div>
+    </section>
+
+    <section class="gate-note">
+      <h2>パスワードの扱い</h2>
+      <p>
+        入力したパスワードはそのSNSのログイン確認にだけ使い、Loomixのサーバーには保存しません。
+        Loomixが覚えるのは「どのSNSの、どのアカウントと連携したか」だけです。
+      </p>
+      <p>
+        Pitterは公式のopenAPI仕様に合わせて、パスワードに加えてAPIキー（Pitterの「設定 → APIキー」で発行）が必要です。
+        アカウントをお持ちでない場合は、各SNSの登録ページから作れます。
+      </p>
+    </section>
+
+    <footer class="gate-foot">
+      <span>Loomix 0.4</span>
+      <span id="gateStatus">連携状況を確認しています</span>
+    </footer>
+
+  </div>
+</div>
+
+<!-- ================================================================ 本体 -->
+<div class="shell" id="app" hidden>
+
+  <aside class="sidebar">
+    <a class="side-brand" href="#/home">
       <span class="brand-name">Loomix</span>
-      <span class="brand-ver">0.3</span>
-    </div>
-    <div class="top-tools">
-      <label class="auto" title="60秒ごとに更新">
-        <input type="checkbox" id="autoRefresh" checked>
-        <span class="box" aria-hidden="true"></span>
-        <span>自動更新</span>
-      </label>
-      <button id="refreshBtn" class="btn" type="button">更新</button>
-    </div>
-    </div>
-  </header>
+      <span class="brand-ver">0.4</span>
+    </a>
+    <nav class="side-nav" aria-label="メイン">
+      <a class="nav-item" href="#/home" data-route="home">
+        <svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M4 10.6 12 4l8 6.6V20a1 1 0 0 1-1 1h-4.5v-6h-5v6H5a1 1 0 0 1-1-1z"/></svg>
+        <span>ホーム</span>
+      </a>
+      <a class="nav-item" href="#/accounts" data-route="accounts">
+        <svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M10 13.4a4.2 4.2 0 0 0 6 0l2.7-2.7a4.2 4.2 0 0 0-6-6L11.4 6"/><path d="M14 10.6a4.2 4.2 0 0 0-6 0l-2.7 2.7a4.2 4.2 0 0 0 6 6L12.6 18"/></svg>
+        <span>連携アカウント</span>
+      </a>
+      <a class="nav-item" href="#/profile" data-route="profile">
+        <svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="12" cy="8.5" r="3.6"/><path d="M4.5 20c1.3-3.7 4-5.6 7.5-5.6s6.2 1.9 7.5 5.6"/></svg>
+        <span>プロフィール</span>
+      </a>
+      <a class="nav-item" href="#/settings" data-route="settings">
+        <svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M4 7h9M19 7h1M4 17h2M12 17h8"/><circle cx="16" cy="7" r="2.2"/><circle cx="9" cy="17" r="2.2"/></svg>
+        <span>設定</span>
+      </a>
+    </nav>
+    <div class="side-user" id="sideUser"></div>
+  </aside>
 
-  <nav class="filters" aria-label="サービス絞り込み">
-    <div class="filters-inner">
-    <div class="filter-scroll" id="filterBar">
-      <button class="tab is-active" type="button" data-service="all" aria-pressed="true">
-        すべて<span class="n" id="count-all"></span>
-      </button>
-      <button class="tab" type="button" data-service="karotter" aria-pressed="false">
-        karotter<span class="n" id="count-karotter"></span>
-      </button>
-      <button class="tab" type="button" data-service="yudetter" aria-pressed="false">
-        yudetter<span class="n" id="count-yudetter"></span>
-      </button>
-      <button class="tab" type="button" data-service="amehare" aria-pressed="false">
-        am-hr<span class="n" id="count-amehare"></span>
-      </button>
-      <button class="tab" type="button" data-service="pitter" aria-pressed="false">
-        pitter<span class="n" id="count-pitter"></span>
-      </button>
-    </div>
-    <label class="reply-filter" title="返信を除いて表示">
-      <input type="checkbox" id="hideReplies">
-      <span class="box" aria-hidden="true"></span>
-      <span>返信を除外</span>
-    </label>
-    </div>
-  </nav>
+  <div class="main">
 
-  <main class="feed" id="feed" aria-live="polite"></main>
+    <header class="top">
+      <div class="top-inner">
+        <h1 class="top-title" id="topTitle">ホーム</h1>
+        <div class="top-tools" id="topTools">
+          <label class="auto" title="60秒ごとに更新">
+            <input type="checkbox" id="autoRefresh" checked>
+            <span class="box" aria-hidden="true"></span>
+            <span>自動更新</span>
+          </label>
+          <button id="refreshBtn" class="btn" type="button">更新</button>
+        </div>
+      </div>
+    </header>
 
-  <div class="feed-end" id="feedEnd" hidden>
-    <p class="loading-line" id="loadingLine" hidden>読み込み中...</p>
-    <button class="more" id="moreBtn" type="button" hidden>さらに読み込む</button>
-    <p class="stamp" id="stamp"></p>
+    <nav class="filters" id="filters" aria-label="サービス絞り込み">
+      <div class="filters-inner">
+        <div class="filter-scroll" id="filterBar">
+          <button class="tab is-active" type="button" data-service="all" aria-pressed="true">
+            すべて<span class="n" id="count-all"></span>
+          </button>
+          <button class="tab" type="button" data-service="karotter" aria-pressed="false">
+            karotter<span class="n" id="count-karotter"></span>
+          </button>
+          <button class="tab" type="button" data-service="yudetter" aria-pressed="false">
+            yudetter<span class="n" id="count-yudetter"></span>
+          </button>
+          <button class="tab" type="button" data-service="amehare" aria-pressed="false">
+            am-hr<span class="n" id="count-amehare"></span>
+          </button>
+          <button class="tab" type="button" data-service="pitter" aria-pressed="false">
+            pitter<span class="n" id="count-pitter"></span>
+          </button>
+        </div>
+        <label class="reply-filter" title="返信を除いて表示">
+          <input type="checkbox" id="hideReplies">
+          <span class="box" aria-hidden="true"></span>
+          <span>返信を除外</span>
+        </label>
+      </div>
+    </nav>
+
+    <section class="view" id="view-home">
+      <main class="feed" id="feed" aria-live="polite"></main>
+
+      <div class="feed-end" id="feedEnd" hidden>
+        <p class="loading-line" id="loadingLine" hidden>読み込み中...</p>
+        <button class="more" id="moreBtn" type="button" hidden>さらに読み込む</button>
+        <p class="stamp" id="stamp"></p>
+        <p class="updated" id="statusLine"></p>
+      </div>
+
+      <div class="empty" id="empty" hidden>該当する投稿がありません</div>
+    </section>
+
+    <section class="view" id="view-accounts" hidden></section>
+    <section class="view" id="view-profile" hidden></section>
+    <section class="view" id="view-settings" hidden></section>
+
   </div>
 
-  <div class="empty" id="empty" hidden>該当する投稿がありません</div>
-
-  <footer class="foot">
-    <div class="foot-inner">
-      <span>Loomix 0.3</span>
-      <span id="statusLine">読み込み中</span>
-    </div>
-  </footer>
+  <nav class="mobile-nav" aria-label="メイン">
+    <a href="#/home" data-route="home">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M4 10.6 12 4l8 6.6V20a1 1 0 0 1-1 1h-4.5v-6h-5v6H5a1 1 0 0 1-1-1z"/></svg>
+      <span>ホーム</span>
+    </a>
+    <a href="#/accounts" data-route="accounts">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M10 13.4a4.2 4.2 0 0 0 6 0l2.7-2.7a4.2 4.2 0 0 0-6-6L11.4 6"/><path d="M14 10.6a4.2 4.2 0 0 0-6 0l-2.7 2.7a4.2 4.2 0 0 0 6 6L12.6 18"/></svg>
+      <span>連携</span>
+    </a>
+    <a href="#/profile" data-route="profile">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="12" cy="8.5" r="3.6"/><path d="M4.5 20c1.3-3.7 4-5.6 7.5-5.6s6.2 1.9 7.5 5.6"/></svg>
+      <span>プロフィール</span>
+    </a>
+    <a href="#/settings" data-route="settings">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M4 7h9M19 7h1M4 17h2M12 17h8"/><circle cx="16" cy="7" r="2.2"/><circle cx="9" cy="17" r="2.2"/></svg>
+      <span>設定</span>
+    </a>
+  </nav>
 
 </div>
 
@@ -98,6 +208,8 @@
   <button class="lb-nav next" id="lbNext" type="button" aria-label="次の画像">›</button>
 </div>
 
-<script src="app.js?v=030"></script>
+<div class="toast" id="toast" hidden></div>
+
+<script src="app.js?v=040"></script>
 </body>
 </html>

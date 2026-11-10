@@ -10,7 +10,15 @@ v0.3:
   - 新着は差分同期（既知の投稿に当たったら止める）
   - サイト内プロフィール表示用 /api/user
   - gzip 応答
+
+v0.4:
+  - 連携認証（auth.py）: 各SNSの自分のアカウントでログインしてはじめてタイムラインが開く
+    POST /api/auth/login, GET /api/auth/status, POST /api/auth/unlink, POST /api/auth/logout
+  - Loomix セッションは HMAC 署名トークン。パスワードは保存しない
+  - 未連携・連携不足では /api/timeline と /api/user が 401 auth_required を返す
 """
+
+import auth
 
 import collections
 import gzip
@@ -33,7 +41,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 
 PORT = int(os.environ.get("PORT", 8080))
 PUBLIC_DIR = os.path.join(os.path.dirname(__file__), "public")
-VERSION = "0.3"
+VERSION = "0.4"
 
 SSL_CTX = ssl.create_default_context()
 
@@ -98,6 +106,7 @@ def _cache_dir():
 
 
 CACHE_DIR = _cache_dir()
+auth.configure(CACHE_DIR)
 
 
 def browser_headers(extra=None):
@@ -1182,6 +1191,18 @@ def json_bytes(obj):
     return json.dumps(obj, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
 
 
+def services_public():
+    """連携フォームの仕様（項目名・ヘルプ・登録URL）付きのサービス一覧。"""
+    out = []
+    for s in SERVICES:
+        item = dict(s)
+        spec = auth.AUTH_SPECS.get(s["id"])
+        if spec:
+            item["auth"] = spec
+        out.append(item)
+    return out
+
+
 def health():
     ensure_archive()
     age = round(time.time() - _last_sync) if _last_sync else None
@@ -1207,7 +1228,106 @@ def health():
             "minIntervalSec": MIN_INTERVAL,
             "ratePerMin": RATE_PER_MIN,
         },
+        "authRequired": auth.required_services(),
     }
+
+
+def api_dispatch(method, path, query, body, headers, client_ip=""):
+    """API の入口（server.py と api/index.py で共有）。
+
+    戻り値は (status, obj, cache_control)。
+    """
+    def qget(name, default=None):
+        v = query.get(name) if query else None
+        return v[0] if v else default
+
+    token = auth.bearer_token(headers)
+
+    # -- 認証（公開） -------------------------------------------------
+
+    if path == "/api/auth/status":
+        return 200, auth.status(token), "no-store"
+
+    if path == "/api/auth/providers":
+        return 200, {"ok": True, "version": VERSION,
+                     "required": auth.required_services(),
+                     "services": services_public()}, "public, max-age=300"
+
+    if path == "/api/auth/login":
+        if method != "POST":
+            return 405, {"ok": False, "error": "POST で送ってください"}, "no-store"
+        try:
+            result = auth.login(body or {}, token=token, client_ip=client_ip)
+        except auth.AuthError as e:
+            return e.status, {"ok": False, "error": e.message, "code": e.code,
+                              "auth": auth.status(token)}, "no-store"
+        return 200, dict({"ok": True}, **result), "no-store"
+
+    if path == "/api/auth/unlink":
+        if method != "POST":
+            return 405, {"ok": False, "error": "POST で送ってください"}, "no-store"
+        service = str((body or {}).get("service") or "")
+        try:
+            result = auth.unlink(token, service)
+        except auth.AuthError as e:
+            return e.status, {"ok": False, "error": e.message, "code": e.code}, "no-store"
+        return 200, dict({"ok": True}, **result), "no-store"
+
+    if path == "/api/auth/logout":
+        auth.logout(token)
+        return 200, {"ok": True, "auth": auth.status("")}, "no-store"
+
+    if path == "/api/services":
+        return 200, {"ok": True, "version": VERSION, "services": services_public()}, \
+            "public, max-age=300"
+
+    if path == "/api/health":
+        return 200, health(), "no-cache"
+
+    # -- ゲート（4サービスすべて連携していないと開かない） -------------
+
+    gate = auth.status(token)
+    if not gate["gateOpen"]:
+        return 401, {
+            "ok": False,
+            "code": "auth_required",
+            "error": "タイムラインを開くには、%dつのSNSすべての連携が必要です。" % len(gate["required"]),
+            "auth": gate,
+        }, "no-store"
+
+    if path == "/api/timeline":
+        service = qget("service", "all")
+        force = qget("refresh", "0") not in ("", "0", "false")
+        try:
+            limit = int(qget("limit", str(DEFAULT_LIMIT)) or DEFAULT_LIMIT)
+        except Exception:
+            limit = DEFAULT_LIMIT
+        before = qget("before")
+        try:
+            result = timeline_page(before, limit, service, force=force)
+        except ValueError as e:
+            return 400, {"ok": False, "error": str(e)}, "no-store"
+        except Exception as e:  # noqa: BLE001
+            logging.exception("timeline failed")
+            return 502, {"ok": False, "error": "タイムラインを取得できませんでした: %s" % e}, "no-store"
+        # 過去ページは不変なので短時間キャッシュしてよい
+        return 200, result, "private, max-age=20"
+
+    if path == "/api/user":
+        service = qget("service", "")
+        handle = qget("id", "") or qget("username", "")
+        if service not in SERVICE_BY_ID or not handle:
+            return 400, {"ok": False, "error": "service と id が必要です"}, "no-store"
+        try:
+            result = get_profile(service, handle)
+        except Exception as e:  # noqa: BLE001
+            logging.warning("profile %s/%s failed: %s", service, handle, e)
+            result = None
+        if not result:
+            return 502, {"ok": False, "error": "プロフィールを取得できませんでした"}, "no-store"
+        return 200, result, "private, max-age=120"
+
+    return 404, {"ok": False, "error": "not found"}, "no-store"
 
 
 class LoomixHandler(SimpleHTTPRequestHandler):
@@ -1242,61 +1362,43 @@ class LoomixHandler(SimpleHTTPRequestHandler):
         if self.command != "HEAD":
             self.wfile.write(body)
 
-    def do_GET(self):
+    def _dispatch(self, method):
         parsed = urlparse(self.path)
         path = parsed.path
-        query = parse_qs(parsed.query)
-
-        if path == "/api/timeline":
-            service = query.get("service", ["all"])[0]
-            force = query.get("refresh", ["0"])[0] not in ("", "0", "false")
+        body = None
+        if method == "POST":
             try:
-                limit = int(query.get("limit", [str(DEFAULT_LIMIT)])[0] or DEFAULT_LIMIT)
+                length = int(self.headers.get("Content-Length") or 0)
             except Exception:
-                limit = DEFAULT_LIMIT
-            before = query.get("before", [None])[0]
-            try:
-                result = timeline_page(before, limit, service, force=force)
-            except ValueError as e:
-                self._send_json({"ok": False, "error": str(e)}, status=400)
+                length = 0
+            if length > 64 * 1024:
+                self._send_json({"ok": False, "error": "リクエストが大きすぎます"}, status=413)
                 return
-            except Exception as e:  # noqa: BLE001
-                logging.exception("timeline failed")
-                self._send_json({"ok": False, "error": "タイムラインを取得できませんでした: %s" % e},
-                                status=502)
-                return
-            # 過去ページは不変なので短時間キャッシュしてよい
-            self._send_json(result, cache_control="public, max-age=20")
-            return
+            raw = self.rfile.read(length) if length else b""
+            if raw:
+                try:
+                    body = json.loads(raw.decode("utf-8"))
+                except Exception:
+                    self._send_json({"ok": False, "error": "JSON を解釈できません"}, status=400)
+                    return
+        forwarded = (self.headers.get("X-Forwarded-For") or "").split(",")[0].strip()
+        client_ip = forwarded or (self.client_address or ("",))[0]
+        status, obj, cache_control = api_dispatch(
+            method, path, parse_qs(parsed.query), body, self.headers, client_ip,
+        )
+        self._send_json(obj, status=status, cache_control=cache_control)
 
-        if path == "/api/user":
-            service = query.get("service", [""])[0]
-            handle = query.get("id", [""])[0] or query.get("username", [""])[0]
-            if service not in SERVICE_BY_ID or not handle:
-                self._send_json({"ok": False, "error": "service と id が必要です"}, status=400)
-                return
-            try:
-                result = get_profile(service, handle)
-            except Exception as e:  # noqa: BLE001
-                logging.warning("profile %s/%s failed: %s", service, handle, e)
-                result = None
-            if not result:
-                self._send_json({"ok": False, "error": "プロフィールを取得できませんでした"}, status=502)
-                return
-            self._send_json(result, cache_control="public, max-age=120")
-            return
-
-        if path == "/api/services":
-            self._send_json({"ok": True, "version": VERSION, "services": SERVICES})
-            return
-
-        if path == "/api/health":
-            self._send_json(health())
-            return
-
+    def do_GET(self):
+        if urlparse(self.path).path.startswith("/api/"):
+            return self._dispatch("GET")
         # 静的ファイルは毎回再検証させる（デプロイ直後の古いCSS/JSを避ける）
         self._static_cache = "no-cache, must-revalidate"
         return super().do_GET()
+
+    def do_POST(self):
+        if urlparse(self.path).path.startswith("/api/"):
+            return self._dispatch("POST")
+        self._send_json({"ok": False, "error": "not found"}, status=404)
 
 
 if __name__ == "__main__":

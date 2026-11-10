@@ -8,68 +8,48 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import server  # noqa: E402  (workspace root の BFF 実装を共有)
 
 
-def send(handler, obj, status=200):
+def send(handler, obj, status=200, cache_control="no-store"):
     body = json.dumps(obj, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     handler.send_response(status)
     handler.send_header("Content-Type", "application/json; charset=utf-8")
     handler.send_header("Access-Control-Allow-Origin", "*")
-    handler.send_header("Cache-Control", "public, s-maxage=20, stale-while-revalidate=60")
+    handler.send_header("Cache-Control", cache_control)
     handler.send_header("Content-Length", str(len(body)))
     handler.end_headers()
     handler.wfile.write(body)
 
 
 class handler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        parsed = urlparse(self.path)
-        path = parsed.path
-        query = parse_qs(parsed.query)
+    """Vercel 用エントリ。認証を含むすべての判定は server.api_dispatch に任せる。"""
 
-        subpath = path[4:] if path.startswith("/api") else path
+    def _handle(self, method):
+        parsed = urlparse(self.path)
+        subpath = parsed.path[4:] if parsed.path.startswith("/api") else parsed.path
         if not subpath.startswith("/"):
             subpath = "/" + subpath
+        path = "/api" + subpath
 
-        if subpath == "/timeline":
-            service = query.get("service", ["all"])[0]
-            before = query.get("before", [None])[0]
-            force = query.get("refresh", ["0"])[0] not in ("", "0", "false")
+        body = None
+        if method == "POST":
             try:
-                limit = int(query.get("limit", [str(server.DEFAULT_LIMIT)])[0] or server.DEFAULT_LIMIT)
+                length = int(self.headers.get("Content-Length") or 0)
             except Exception:
-                limit = server.DEFAULT_LIMIT
-            try:
-                result = server.timeline_page(before, limit, service, force=force)
-            except ValueError as e:
-                send(self, {"ok": False, "error": str(e)}, status=400)
-                return
-            except Exception:
-                send(self, {"ok": False, "error": "タイムラインを取得できませんでした"}, status=502)
-                return
-            send(self, result)
-            return
+                length = 0
+            raw = self.rfile.read(length) if length else b""
+            if raw:
+                try:
+                    body = json.loads(raw.decode("utf-8"))
+                except Exception:
+                    send(self, {"ok": False, "error": "JSON を解釈できません"}, 400)
+                    return
 
-        if subpath == "/user":
-            service = query.get("service", [""])[0]
-            handle = query.get("id", [""])[0] or query.get("username", [""])[0]
-            if service not in server.SERVICE_BY_ID or not handle:
-                send(self, {"ok": False, "error": "service と id が必要です"}, status=400)
-                return
-            try:
-                result = server.get_profile(service, handle)
-            except Exception:
-                result = None
-            if not result:
-                send(self, {"ok": False, "error": "プロフィールを取得できませんでした"}, status=502)
-                return
-            send(self, result)
-            return
+        status, obj, cache_control = server.api_dispatch(
+            method, path, parse_qs(parsed.query), body, self.headers, ""
+        )
+        send(self, obj, status, cache_control)
 
-        if subpath == "/services":
-            send(self, {"ok": True, "version": server.VERSION, "services": server.SERVICES})
-            return
+    def do_GET(self):
+        self._handle("GET")
 
-        if subpath == "/health":
-            send(self, server.health())
-            return
-
-        send(self, {"ok": False, "error": "not found"}, status=404)
+    def do_POST(self):
+        self._handle("POST")

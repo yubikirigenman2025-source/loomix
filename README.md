@@ -1,9 +1,43 @@
 # Loomix (ルーミックス)
 
-Karotter / Yudetter / あめ→はれ / Pitter の公開タイムラインを、ひとつの流れに織り交ぜるリーダー。
+Karotter / Yudetter / あめ→はれ / Pitter のタイムラインを、ひとつの流れに織り交ぜるリーダー。
 
 - 本番: https://loomix-z8wt.onrender.com
 - リポジトリ: https://github.com/yubikirigenman2025-source/loomix
+
+## v0.4 の変更
+
+### トップページ（ゲート）と全SNSの認証必須化
+
+- 未連携のときはトップページを表示し、**4つのSNSすべてに自分のアカウントで連携**しないと統合タイムラインに入れない。
+- 各SNSのログイン画面と同じ経路で資格情報を検証する（`auth.py`）。
+
+  | サービス | ログイン経路 | 入力 |
+  |---|---|---|
+  | Karotter | `POST https://api.karotter.com/api/auth/login` | メールアドレスまたはユーザー名＋パスワード |
+  | Yudetter | `POST https://yudetter.com/api/auth/sign-in/email`（`Origin: https://yudetter.com` 必須） | メールアドレス＋パスワード |
+  | あめ→はれ | `POST https://am-hr.com/api/auth/login`（`Origin: https://am-hr.com` 必須） | ユーザーIDまたはメール＋パスワード |
+  | Pitter | `POST https://pitter.jp/system/openAPI.php?action=login` → `action=me` | メール＋パスワード＋APIキー（64桁hex） |
+
+- **パスワードは保存しない**。検証に使うだけで、ディスクにもメモリにも残さない。保存するのは「どのSNSの・どのアカウントと・いつ連携したか」だけ（`.cache/sessions.json`）。
+- Loomix のセッションは HMAC 署名トークン（`<id>.<sig>`、30日・使うたびに延長）。ブラウザは localStorage にトークンだけを持つ。
+- `/api/timeline` と `/api/user` は連携が揃うまで **401 `auth_required`**。ゲートを通過できないとデータは取れない。
+- 運用で必要なSNSだけにしたい場合は環境変数 `LOOMIX_AUTH_REQUIRED=karotter,pitter` のように指定する（既定は4つすべて）。署名鍵は `LOOMIX_SESSION_SECRET`、未指定なら `.cache/session-secret` を自動生成。
+
+### サイドバーUI
+
+- デスクトップ：左240pxの固定サイドバー（Loomixロゴ／ホーム・連携アカウント・プロフィール・設定／下部に連携アカウントのアイコンと「4 / 4 連携」・ログアウト）。
+- スマホ（〜860px）：画面下部のボトムナビゲーションに切り替え。
+- メインカラムは従来の統合タイムライン（無限スクロール・Lightbox・返信除外・60秒自動更新）をそのまま収容。
+
+### 追加API
+
+| メソッド | パス | 内容 |
+|---|---|---|
+| `GET` | `/api/auth/status` | セッションと連携状況（`Authorization: Bearer <token>`）。`linked` / `missing` / `gateOpen` / `providers` を返す |
+| `POST` | `/api/auth/login` | `{service, identifier, password}` または Pitter は `{service, email, password, apiKey}`。成功で `token` と最新の `auth` |
+| `POST` | `/api/auth/unlink` | `{service}` の連携を外す（4つ未満になるとタイムラインは閉じる） |
+| `POST` | `/api/auth/logout` | セッションを破棄 |
 
 ## v0.3 の変更
 
@@ -135,6 +169,7 @@ PORT=3000 python3 server.py
 ```
 work/loomix/
 ├── server.py           # BFF（Python標準ライブラリ）
+├── auth.py             # 各SNSのログイン検証とLoomixセッション
 ├── public/             # index.html / style.css / app.js
 ├── api/index.py        # Vercel 用エントリ（server.py を共有）
 ├── Dockerfile          # Render 用
@@ -150,3 +185,6 @@ work/loomix/
 - Karotter の一覧には、古い投稿のリポストが日付だけ古く混ざることがある。探索済みの床より下のものは表示せず、その時代まで読み進めたときに出す（ページの下端が飛ばないように）。
 - アーカイブは `.cache/` に保存する。Render の無料プランは再起動・再デプロイでディスクが消えるため、そのときは初回 100/100/80/80 件から取り直す。
 - 深く読むほど、全サービスの同じ時間帯を読む必要がある。Karotter は1ページ＝約1〜2時間、遅いサービスは1ページ数日〜数週間なので、深いほど先読みが効く。
+- 連携認証も各SNSの非公開ログイン経路を使う。先方がログイン仕様（項目名・Origin検査・APIキー）を変えると、そのSNSだけ「連携できません」と表示される。`/api/auth/status` の `providers` と各ログイン失敗メッセージで検知する。
+- セッションは `.cache/sessions.json` に置く。Render の無料プランは再デプロイでディスクが消えるため、そのときは再連携が必要（パスワードを保存しない設計の帰結）。
+- ログイン試行は同一IPあたり5分で15回までに制限している（`X-Forwarded-For` の先頭を使用）。
