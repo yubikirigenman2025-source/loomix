@@ -211,6 +211,10 @@ function showGate(notice) {
   }
   renderGate();
   document.title = "Loomix";
+  // ログアウト後に #/settings などが残るとゲートの邪魔になるので、URLをトップに戻す
+  if (location.hash && location.hash !== "#link") {
+    history.replaceState(null, "", location.pathname + location.search);
+  }
 }
 
 function linkCard(service, manage) {
