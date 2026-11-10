@@ -1367,7 +1367,7 @@ class LoomixHandler(SimpleHTTPRequestHandler):
     def log_message(self, fmt, *args):  # 静かに
         logging.info("%s - %s", self.address_string(), fmt % args)
 
-    def _send_json(self, obj, status=200, cache_control="no-cache", gzip_ok=True):
+    def _send_json(self, obj, status=200, cache_control="no-cache", gzip_ok=True, extra_headers=None):
         body = json_bytes(obj)
         accepts_gzip = "gzip" in (self.headers.get("Accept-Encoding") or "")
         if gzip_ok and accepts_gzip and len(body) > 1024:
@@ -1379,6 +1379,9 @@ class LoomixHandler(SimpleHTTPRequestHandler):
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Cache-Control", cache_control)
+        if extra_headers:
+            for k, v in extra_headers:
+                self.send_header(k, v)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         if self.command != "HEAD":
@@ -1408,7 +1411,14 @@ class LoomixHandler(SimpleHTTPRequestHandler):
         status, obj, cache_control = api_dispatch(
             method, path, parse_qs(parsed.query), body, self.headers, client_ip,
         )
-        self._send_json(obj, status=status, cache_control=cache_control)
+        extra_headers = []
+        if isinstance(obj, dict):
+            tok = obj.get("token")
+            if tok:
+                extra_headers.append(("Set-Cookie", "loomix_session=%s; Path=/; Max-Age=31536000; SameSite=Lax; Secure" % tok))
+            elif path == "/api/auth/logout":
+                extra_headers.append(("Set-Cookie", "loomix_session=; Path=/; Max-Age=0; SameSite=Lax; Secure"))
+        self._send_json(obj, status=status, cache_control=cache_control, extra_headers=extra_headers)
 
     def do_GET(self):
         if urlparse(self.path).path.startswith("/api/"):

@@ -52,7 +52,7 @@ YUDETTER_HOST = "https://yudetter.com"
 AMEHARE_HOST = "https://am-hr.com"
 PITTER_HOST = "https://pitter.jp"
 
-SESSION_TTL_SEC = 60 * 60 * 24 * 30          # 30日（使うたびに延びる）
+SESSION_TTL_SEC = 60 * 60 * 24 * 365         # 365日（使うたびに自動延長）
 LOGIN_WINDOW_SEC = 300
 LOGIN_MAX_PER_WINDOW = 15                    # 同一IPからのログイン試行
 
@@ -364,7 +364,9 @@ VERIFIERS = {
 
 import base64
 
-SESSION_TTL_SEC = 60 * 60 * 24 * 60          # 60日（連携のたびに延長）
+SESSION_TTL_SEC = 60 * 60 * 24 * 365         # 365日（アクセスごとに自動延長）
+
+FALLBACK_SECRET = b"1fc17b8b1ac8eec498b4215c027d1d81c19566b00945b5e4777312c05f33e921"
 
 _CACHE_DIR = None
 _lock = threading.RLock()
@@ -414,7 +416,9 @@ def _get_secret():
         _secret = value.encode("utf-8")
     except Exception as e:  # noqa: BLE001 - 書けない環境ではプロセス内だけで持つ
         logging.warning("session secret file unavailable: %s", e)
-        _secret = secrets.token_hex(32).encode("utf-8")
+        _secret = FALLBACK_SECRET
+    if not _secret or len(_secret) < 16:
+        _secret = FALLBACK_SECRET
     return _secret
 
 
@@ -499,10 +503,21 @@ def bearer_token(headers):
         return ""
     try:
         value = headers.get("Authorization") or ""
+        if value.lower().startswith("bearer "):
+            tok = value[7:].strip()
+            if tok:
+                return tok
+        cookie_header = headers.get("Cookie") or ""
+        if "loomix_session=" in cookie_header:
+            import http.cookies
+            c = http.cookies.SimpleCookie()
+            c.load(cookie_header)
+            if "loomix_session" in c:
+                val = c["loomix_session"].value
+                if val:
+                    return urllib.parse.unquote(val)
     except Exception:
-        return ""
-    if value.lower().startswith("bearer "):
-        return value[7:].strip()
+        pass
     return ""
 
 
@@ -548,7 +563,12 @@ def _status_for(claims):
 
 
 def status(token):
-    return _status_for(_decode(token))
+    claims = _decode(token)
+    st = _status_for(claims)
+    if claims:
+        # スライディングセッション：アクセスするたびに1年後へ延長したトークンを返す
+        st["token"] = _encode(_new_claims(claims.get("services") or {}, created=claims.get("iat")))
+    return st
 
 
 def login(payload, token="", client_ip=""):

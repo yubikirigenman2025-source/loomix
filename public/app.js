@@ -150,8 +150,17 @@ function providerName(service) {
 
 function setToken(token) {
   state.token = token || "";
-  if (token) localStorage.setItem(TOKEN_KEY, token);
-  else localStorage.removeItem(TOKEN_KEY);
+  if (token) {
+    try { localStorage.setItem(TOKEN_KEY, token); } catch (_) {}
+    try {
+      document.cookie = `loomix_session=${encodeURIComponent(token)}; path=/; max-age=31536000; SameSite=Lax; Secure`;
+    } catch (_) {}
+  } else {
+    try { localStorage.removeItem(TOKEN_KEY); } catch (_) {}
+    try {
+      document.cookie = "loomix_session=; path=/; max-age=0; SameSite=Lax; Secure";
+    } catch (_) {}
+  }
 }
 
 function authHeaders(extra) {
@@ -182,7 +191,11 @@ async function loadStatus() {
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const data = await res.json();
   state.auth = data;
-  if (!data.authenticated) setToken("");
+  if (data.token) {
+    setToken(data.token);
+  } else if (!data.authenticated) {
+    setToken("");
+  }
   return data;
 }
 
@@ -622,7 +635,7 @@ function renderSettings() {
           <span class="v">${session.createdAt ? esc(fullTime(session.createdAt)) : "—"}</span>
         </div>
         <div class="set-row">
-          <div><div class="k">セッションの期限</div><div class="d">使うたびに30日先へ延びます。</div></div>
+          <div><div class="k">セッションの期限</div><div class="d">使うたびに1年先へ自動延長されます（Cookie・端末二重保持）。</div></div>
           <span class="v">${session.expiresAt ? esc(fullTime(session.expiresAt)) : "—"}</span>
         </div>
         <div class="set-row">
@@ -1358,6 +1371,15 @@ window.addEventListener("hashchange", () => {
 async function boot() {
   updateTabs();
   updateFooter();
+  if (!state.token) {
+    try {
+      const match = document.cookie.match(/(?:^|;\s*)loomix_session=([^;]+)/);
+      if (match) {
+        state.token = decodeURIComponent(match[1]);
+        try { localStorage.setItem(TOKEN_KEY, state.token); } catch (_) {}
+      }
+    } catch (_) {}
+  }
   try {
     await loadStatus();
   } catch (err) {
