@@ -810,6 +810,21 @@ a { color: inherit; }
 }
 .side-logout:hover { background: var(--surface); color: #fff; }
 
+.side-link-cta {
+  display: block;
+  width: 100%;
+  text-align: center;
+  font-size: 11px;
+  color: #fff;
+  background: #181818;
+  border: 1px solid #333;
+  padding: 6px 10px;
+  margin-top: 8px;
+  border-radius: 2px;
+  text-decoration: none;
+}
+.side-link-cta:hover { background: #242424; }
+
 .main {
   min-width: 0;
   min-height: 100vh;
@@ -897,6 +912,20 @@ a { color: inherit; }
   transition: background-color 0.12s;
 }
 .cta:hover { background: #fff; }
+
+.cta-sub {
+  background: #181818;
+  color: #ccc;
+  border: 1px solid #333;
+}
+.cta-sub:hover { background: #242424; color: #fff; }
+
+.hero-subtext {
+  margin-top: 14px;
+  font-size: 11px;
+  color: var(--fg-4);
+  line-height: 1.6;
+}
 
 .hero-progress {
   font-size: 10.5px;

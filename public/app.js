@@ -304,10 +304,19 @@ function renderGate() {
   }
 
   const providers = Object.keys(auth.providers || {});
+  const totalCount = providers.length || 4;
+  gateCount.textContent = `${linkedCount} / ${totalCount}`;
+
+  if (!auth) {
+    gateStatus.textContent = "接続できませんでした";
+    linkList.innerHTML = `<article class="link-card"><div class="lc-body" style="padding-top:14px">
+      <p class="lc-help">サーバーに接続できませんでした。少し待ってから再読み込みしてください。</p>
+    </div></article>`;
+    return;
+  }
+
   linkList.innerHTML = providers.map((s) => linkCard(s, false)).join("");
-  gateStatus.textContent = auth.gateOpen
-    ? `${linkedCount} / ${requiredCount} 連携済み`
-    : `${linkedCount} / ${requiredCount} 連携済み ・ あと${requiredCount - linkedCount}件`;
+  gateStatus.textContent = `${linkedCount} / ${totalCount} 連携中（連携は任意です）`;
 }
 
 async function submitLink(form) {
@@ -339,12 +348,9 @@ async function submitLink(form) {
     if (inApp) {
       renderSideUser();
       if (state.route === "accounts") renderAccounts();
-      if (state.auth.gateOpen) startAutoIfOn();
+      if (state.route === "profile") renderProfilePage();
     } else {
-      renderGate();
-      if (state.auth.gateOpen) {
-        setTimeout(() => { if (state.auth && state.auth.gateOpen) openApp(); }, 550);
-      }
+      openApp();
     }
   } catch (err) {
     if (err.message === "auth_required") return;
@@ -366,13 +372,9 @@ async function unlink(service) {
     });
     state.auth = data.auth;
     if (data.token !== undefined) setToken(data.token);
-    if (!data.auth.gateOpen) {
-      resetTimeline();
-      showGate("連携を解除しました。4つすべてを連携するとタイムラインが開きます。");
-      return;
-    }
     renderSideUser();
     renderAccounts();
+    if (state.route === "profile") renderProfilePage();
     toast(`${providerName(service)}の連携を解除しました`);
   } catch (err) {
     if (err.message !== "auth_required") toast(err.message || "解除できませんでした");
@@ -391,11 +393,12 @@ async function logout() {
     state.auth = null;
   }
   setToken("");
-  resetTimeline();
   if (!state.auth) {
     try { await loadStatus(); } catch (err) { state.auth = null; }
   }
-  showGate("ログアウトしました。");
+  renderSideUser();
+  if (state.route === "accounts") renderAccounts();
+  if (state.route === "profile") renderProfilePage();
   toast("ログアウトしました");
 }
 
@@ -419,36 +422,47 @@ function renderSideUser() {
   const auth = state.auth;
   if (!auth) { sideUser.innerHTML = ""; return; }
   const linked = Object.values(auth.linked || {});
-  const required = (auth.required || []).length;
+  const total = Object.keys(auth.providers || {}).length || 4;
   const avatars = linked.slice(0, 5).map((a) => (
     a.avatarUrl
       ? `<img src="${esc(a.avatarUrl)}" alt="" referrerpolicy="no-referrer" loading="lazy">`
       : `<span class="ph"></span>`
   )).join("");
 
-  sideUser.innerHTML = `
-    <div class="su-row">
-      <div class="su-avatars">${avatars}</div>
-      <div>
-        <div class="su-name">自分のアカウント</div>
-        <div class="su-label">${linked.length} / ${required} 連携</div>
+  if (linked.length === 0) {
+    sideUser.innerHTML = `
+      <div class="su-row">
+        <div>
+          <div class="su-name">ゲスト（未連携）</div>
+          <div class="su-label">0 / ${total} 連携</div>
+        </div>
       </div>
-    </div>
-    <button class="side-logout" id="sideLogout" type="button">ログアウト</button>
-  `;
-  const btn = document.getElementById("sideLogout");
-  if (btn) btn.addEventListener("click", logout);
+      <a class="side-link-cta" href="#/accounts">アカウントを連携</a>
+    `;
+  } else {
+    sideUser.innerHTML = `
+      <div class="su-row">
+        <div class="su-avatars">${avatars}</div>
+        <div>
+          <div class="su-name">${esc(linked[0].displayName || linked[0].username || "連携アカウント")}</div>
+          <div class="su-label">${linked.length} / ${total} 連携中</div>
+        </div>
+      </div>
+      <button class="side-logout" id="sideLogout" type="button">ログアウト</button>
+    `;
+    const btn = document.getElementById("sideLogout");
+    if (btn) btn.addEventListener("click", logout);
+  }
 }
 
 function route() {
   const raw = location.hash.replace(/^#\/?/, "").split("?")[0];
-  const name = ROUTES[raw] ? raw : "home";
-  state.route = name;
-
-  if (!state.auth || !state.auth.gateOpen) {
+  if (raw === "top" || raw === "lp" || raw === "gate") {
     showGate();
     return;
   }
+  const name = ROUTES[raw] ? raw : "home";
+  state.route = name;
 
   gateEl.hidden = true;
   appEl.hidden = false;
@@ -479,14 +493,12 @@ function renderAccounts() {
   if (!auth) return;
   const providers = Object.keys(auth.providers || {});
   const linked = Object.keys(auth.linked || {}).length;
-  const required = (auth.required || []).length;
-  const remaining = Math.max(0, required - linked);
+  const total = providers.length;
 
   viewAccounts.innerHTML = `
     <div class="page-head">
       <h2>連携アカウント</h2>
-      <p>${linked} / ${required} 連携中。${remaining ? `あと${remaining}件の連携でタイムラインが開きます。` : "タイムラインが開いています。"}
-      連携を解除するとタイムラインは閉じます。</p>
+      <p>${linked} / ${total} 連携中。アカウントの連携は任意です。連携したアカウントの情報はブラウザに安全に保持され、いつでも追加・解除できます。</p>
     </div>
     <div class="page-body">
       <div class="link-list">${providers.map((s) => linkCard(s, true)).join("")}</div>
@@ -557,8 +569,20 @@ async function fillProfileCard(acc) {
 
 function renderProfilePage() {
   const auth = state.auth;
-  if (!auth) return;
-  const linked = Object.values(auth.linked || {});
+  const linked = auth ? Object.values(auth.linked || {}) : [];
+  if (linked.length === 0) {
+    viewProfile.innerHTML = `
+      <div class="page-head">
+        <h2>プロフィール</h2>
+        <p>アカウントが連携されていません。</p>
+      </div>
+      <div class="page-body">
+        <p style="color:var(--fg-3);font-size:12px;margin-bottom:16px">「連携アカウント」からお持ちのSNSアカウントを連携すると、ここにプロフィールや統計情報が表示されます。</p>
+        <a class="cta" href="#/accounts" style="display:inline-block">アカウントを連携する</a>
+      </div>
+    `;
+    return;
+  }
   viewProfile.innerHTML = `
     <div class="page-head">
       <h2>プロフィール</h2>
@@ -841,7 +865,6 @@ function adoptFirstPage(data) {
 
 async function loadFirstPage({ force = false } = {}) {
   if (state.loadingFirst) return;
-  if (!state.auth || !state.auth.gateOpen) return;
   state.loadingFirst = true;
   state.gen += 1;
   const gen = state.gen;
@@ -887,7 +910,6 @@ async function loadMore() {
   if (state.isFetching || state.loadingFirst) return;
   if (!state.hasMore || !state.nextBefore) return;
   if (Date.now() < state.nextAllowedAt) return;
-  if (!state.auth || !state.auth.gateOpen) return;
   if (retryTimer) {
     clearTimeout(retryTimer);
     retryTimer = null;
@@ -964,7 +986,7 @@ function chainIfNeeded() {
 // 60秒ごとの自動更新。読み込み済みの古い投稿はそのまま残し、新着だけ頭に足す。
 async function refreshNewest() {
   if (state.isFetching || state.loadingFirst) return;
-  if (state.route !== "home" || !state.auth || !state.auth.gateOpen) return;
+  if (state.route !== "home") return;
   try {
     const data = await apiFetch(timelineUrl(null));
     state.fetchedAt = data.fetchedAt;
@@ -1317,7 +1339,6 @@ document.addEventListener("keydown", (e) => {
 /* ------------------------------------------------------------ boot */
 
 window.addEventListener("hashchange", () => {
-  if (!state.auth || !state.auth.gateOpen) return;
   route();
 });
 
@@ -1329,11 +1350,13 @@ async function boot() {
   } catch (err) {
     console.error("status", err);
     state.auth = null;
-    showGate("サーバーに接続できませんでした。少し待ってから再読み込みしてください。");
-    return;
   }
-  if (state.auth && state.auth.gateOpen) openApp();
-  else showGate();
+  const raw = location.hash.replace(/^#\/?/, "").split("?")[0];
+  if (raw === "top" || raw === "lp" || raw === "gate") {
+    showGate();
+  } else {
+    openApp();
+  }
 }
 
 boot();

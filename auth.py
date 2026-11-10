@@ -56,9 +56,8 @@ SESSION_TTL_SEC = 60 * 60 * 24 * 30          # 30日（使うたびに延びる�
 LOGIN_WINDOW_SEC = 300
 LOGIN_MAX_PER_WINDOW = 15                    # 同一IPからのログイン試行
 
-# タイムラインを開ける条件。既定は4サービスすべて。
-# 運用で絞りたいときだけ LOOMIX_AUTH_REQUIRED=karotter,pitter のように指定する。
-DEFAULT_REQUIRED = ["karotter", "yudetter", "amehare", "pitter"]
+# 連携は任意。タイムラインは認証なしでも誰でも閲覧可能。
+DEFAULT_REQUIRED = []
 
 
 class AuthError(Exception):
@@ -137,7 +136,7 @@ def required_services():
         return list(DEFAULT_REQUIRED)
     ids = [s.strip() for s in raw.split(",") if s.strip()]
     ids = [s for s in ids if s in AUTH_SPECS]
-    return ids or list(DEFAULT_REQUIRED)
+    return ids
 
 
 # ---------------------------------------------------------------- HTTP
@@ -537,7 +536,7 @@ def _status_for(claims):
         "ok": True,
         "version": VERSION,
         "authenticated": bool(claims),
-        "gateOpen": bool(claims) and not missing,
+        "gateOpen": True,
         "required": required,
         "linked": linked,
         "missing": missing,

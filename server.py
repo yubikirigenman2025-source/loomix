@@ -1284,16 +1284,9 @@ def api_dispatch(method, path, query, body, headers, client_ip=""):
     if path == "/api/health":
         return 200, health(), "no-cache"
 
-    # -- ゲート（4サービスすべて連携していないと開かない） -------------
+    # -- 認証状態（任意連携） -------------
 
     gate = auth.status(token)
-    if not gate["gateOpen"]:
-        return 401, {
-            "ok": False,
-            "code": "auth_required",
-            "error": "タイムラインを開くには、%dつのSNSすべての連携が必要です。" % len(gate["required"]),
-            "auth": gate,
-        }, "no-store"
 
     if path == "/api/timeline":
         service = qget("service", "all")
