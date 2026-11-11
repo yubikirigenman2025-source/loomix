@@ -37,6 +37,7 @@ const state = {
   fetchedAt: null,
   errors: {},
   profileCache: new Map(),
+  isPreview: false,
 };
 
 const gateEl = document.getElementById("gate");
@@ -45,6 +46,10 @@ const gateCount = document.getElementById("gateCount");
 const gateStatus = document.getElementById("gateStatus");
 const gateNotice = document.getElementById("gateNotice");
 const linkList = document.getElementById("linkList");
+const swipeTrack = document.getElementById("swipeTrack");
+const swipeDots = document.getElementById("swipeDots");
+const swipePrev = document.getElementById("swipePrev");
+const swipeNext = document.getElementById("swipeNext");
 const sideUser = document.getElementById("sideUser");
 const topTitle = document.getElementById("topTitle");
 const topTools = document.getElementById("topTools");
@@ -299,39 +304,158 @@ function linkCard(service, manage) {
   </article>`;
 }
 
+function swipeLoginCard(service) {
+  const spec = providerSpec(service);
+  const linked = state.auth && state.auth.linked && state.auth.linked[service];
+  const label = spec.title || service;
+  const emoji = spec.emoji || "🌐";
+  const tagline = spec.tagline || "";
+  const accent = spec.accent || "#3b82f6";
+  const host = spec.host || "";
+
+  if (linked) {
+    const avatar = linked.avatarUrl
+      ? `<img src="${esc(linked.avatarUrl)}" alt="" referrerpolicy="no-referrer" loading="lazy" style="width:36px;height:36px;border-radius:50%;object-fit:cover">`
+      : `<span class="ph" style="width:36px;height:36px;display:inline-flex;align-items:center;justify-content:center;background:#181818;border-radius:50%">${esc((linked.displayName || linked.handle || "?").slice(0, 1))}</span>`;
+    return `<article class="swipe-card is-linked" data-service="${esc(service)}" style="--card-accent: ${accent}">
+      <div class="swipe-card-accent"></div>
+      <div class="swipe-card-head">
+        <div class="swipe-card-title-wrap">
+          <span class="swipe-card-emoji">${emoji}</span>
+          <div>
+            <div class="swipe-card-name">${esc(label)}</div>
+            <div class="swipe-card-host">${esc(host)}</div>
+          </div>
+        </div>
+        <span class="swipe-card-tag on" style="color:#cfcfcf;border-color:#333">連携中</span>
+      </div>
+      <div class="swipe-card-body">
+        <div class="lc-who">
+          ${avatar}
+          <div>
+            <div class="who-name">${esc(linked.displayName || linked.handle || "")}</div>
+            <div class="who-handle">@${esc(linked.handle || "")}</div>
+          </div>
+        </div>
+        <div class="lc-actions" style="margin-top:14px">
+          <a class="cta" href="#/home" style="padding:6px 14px;font-size:12px">タイムラインを見る</a>
+          <button class="btn" type="button" data-unlink="${esc(service)}">連携解除</button>
+        </div>
+      </div>
+    </article>`;
+  }
+
+  const fields = (spec.fields || []).map((f) => {
+    const id = `sw-${service}-${f.key}`;
+    return `<div class="field">
+      <label for="${id}">${esc(f.label)}</label>
+      <input id="${id}" name="${esc(f.key)}" type="${esc(f.type || "text")}"
+             placeholder="${esc(f.placeholder || "")}"
+             autocomplete="${esc(f.autocomplete || "off")}" autocapitalize="off"
+             spellcheck="false" required>
+    </div>`;
+  }).join("");
+
+  const help = spec.help ? `<p class="lc-help">${esc(spec.help)}</p>` : "";
+  const signup = spec.signupUrl
+    ? `<a class="lc-link" href="${esc(spec.signupUrl)}" target="_blank" rel="noopener noreferrer">${esc(spec.registerNote || "アカウント作成")} ↗</a>`
+    : "";
+
+  return `<article class="swipe-card" data-service="${esc(service)}" style="--card-accent: ${accent}">
+    <div class="swipe-card-accent"></div>
+    <div class="swipe-card-head">
+      <div class="swipe-card-title-wrap">
+        <span class="swipe-card-emoji">${emoji}</span>
+        <div>
+          <div class="swipe-card-name">${esc(label)}</div>
+          <div class="swipe-card-host">${esc(host)}</div>
+        </div>
+      </div>
+      <span class="swipe-card-tag">${esc(tagline)}</span>
+    </div>
+    <div class="swipe-card-body">
+      <form class="lc-form" data-link-form data-service="${esc(service)}">
+        ${fields}
+        ${help}
+        <div class="lc-actions">
+          <button class="btn solid" type="submit" style="background:${accent};border-color:${accent};color:#fff">${esc(label)}でログインして連携</button>
+          ${signup}
+        </div>
+        <p class="lc-error" data-error></p>
+      </form>
+    </div>
+  </article>`;
+}
+
+function renderSwipeDots(count) {
+  if (!swipeDots) return;
+  swipeDots.innerHTML = Array.from({ length: count }, (_, i) =>
+    `<button class="swipe-dot ${i === 0 ? "is-active" : ""}" data-index="${i}" aria-label="SNSカード ${i + 1}"></button>`
+  ).join("");
+}
+
+function updateActiveDot(index) {
+  if (!swipeDots) return;
+  const dots = swipeDots.querySelectorAll(".swipe-dot");
+  dots.forEach((dot, i) => {
+    dot.classList.toggle("is-active", i === index);
+  });
+  if (swipeTrack) {
+    const cards = swipeTrack.querySelectorAll(".swipe-card");
+    cards.forEach((card, i) => {
+      card.classList.toggle("is-active", i === index);
+    });
+  }
+}
+
+function setupSwipeListeners() {
+  if (!swipeTrack) return;
+  let scrollTimeout = null;
+  swipeTrack.onscroll = () => {
+    if (scrollTimeout) clearTimeout(scrollTimeout);
+    scrollTimeout = setTimeout(() => {
+      const cards = swipeTrack.querySelectorAll(".swipe-card");
+      if (!cards.length) return;
+      const trackCenter = swipeTrack.scrollLeft + swipeTrack.offsetWidth / 2;
+      let closestIdx = 0;
+      let minDiff = Infinity;
+      cards.forEach((card, i) => {
+        const cardCenter = card.offsetLeft + card.offsetWidth / 2;
+        const diff = Math.abs(trackCenter - cardCenter);
+        if (diff < minDiff) {
+          minDiff = diff;
+          closestIdx = i;
+        }
+      });
+      updateActiveDot(closestIdx);
+    }, 50);
+  };
+}
+
 function renderGate() {
   const auth = state.auth;
-  const linkedCount = auth ? (auth.progress ? auth.progress.linked : Object.keys(auth.linked || {}).length) : 0;
-  const requiredCount = auth && auth.required ? auth.required.length : 4;
-  gateCount.textContent = `${linkedCount} / ${requiredCount}`;
+  const providers = (auth && auth.providers) ? Object.keys(auth.providers) : ["karotter", "yudetter", "amehare", "pitter", "amiverse"];
+  const linkedCount = auth && auth.linked ? Object.keys(auth.linked).length : 0;
+  const totalCount = providers.length || 5;
 
-  if (!auth) {
-    gateStatus.textContent = "接続できませんでした";
-    linkList.innerHTML = `<article class="link-card"><div class="lc-body" style="padding-top:14px">
-      <p class="lc-help">サーバーに接続できませんでした。少し待ってから再読み込みしてください。</p>
-    </div></article>`;
-    return;
+  if (swipeTrack) {
+    swipeTrack.innerHTML = providers.map((s) => swipeLoginCard(s)).join("");
+    renderSwipeDots(providers.length);
+    setupSwipeListeners();
   }
 
-  const providers = Object.keys(auth.providers || {});
-  const totalCount = providers.length || 4;
-  gateCount.textContent = `${linkedCount} / ${totalCount}`;
-
-  if (!auth) {
-    gateStatus.textContent = "接続できませんでした";
-    linkList.innerHTML = `<article class="link-card"><div class="lc-body" style="padding-top:14px">
-      <p class="lc-help">サーバーに接続できませんでした。少し待ってから再読み込みしてください。</p>
-    </div></article>`;
-    return;
+  if (linkList) {
+    linkList.innerHTML = providers.map((s) => linkCard(s, false)).join("");
   }
 
-  linkList.innerHTML = providers.map((s) => linkCard(s, false)).join("");
-  gateStatus.textContent = `${linkedCount} / ${totalCount} 連携中（連携は任意です）`;
+  if (gateStatus) {
+    gateStatus.textContent = `${linkedCount} / ${totalCount} 連携中（連携は任意です）`;
+  }
 }
 
 async function submitLink(form) {
   const service = form.dataset.service;
-  const card = form.closest(".link-card");
+  const card = form.closest(".swipe-card") || form.closest(".link-card");
   const errorEl = card ? card.querySelector("[data-error]") : null;
   const button = form.querySelector("button[type=submit]");
   const inApp = !appEl.hidden;
@@ -469,12 +593,50 @@ function renderSideUser() {
   }
 }
 
+function renderPreviewBanner() {
+  let banner = document.getElementById("previewBanner");
+  if (state.isPreview) {
+    if (!banner) {
+      banner = document.createElement("div");
+      banner.id = "previewBanner";
+      banner.className = "preview-banner";
+      if (viewHome && feedEl) {
+        viewHome.insertBefore(banner, feedEl);
+      }
+    }
+    banner.innerHTML = `
+      <div>
+        <span class="preview-banner-badge">プレビュー</span>
+        <span>すべての公開投稿を表示しています</span>
+      </div>
+      <a class="preview-banner-action" href="#gate">ログインして自分専用にする →</a>
+    `;
+    banner.hidden = false;
+  } else if (banner) {
+    banner.hidden = true;
+  }
+}
+
 function route() {
   const raw = location.hash.replace(/^#\/?/, "").split("?")[0];
+  const linkedCount = state.auth && state.auth.linked ? Object.keys(state.auth.linked).length : 0;
+
   if (raw === "top" || raw === "lp" || raw === "gate") {
     showGate();
     return;
   }
+  if (raw === "preview") {
+    state.isPreview = true;
+    state.route = "home";
+  } else {
+    state.isPreview = false;
+    // なにも連携していないときは初期トップ画面（ゲート）を表示！
+    if (linkedCount === 0 && (raw === "" || raw === "home")) {
+      showGate();
+      return;
+    }
+  }
+
   if (raw === "accounts" || raw === "link") {
     location.hash = "#/settings";
     return;
@@ -494,12 +656,15 @@ function route() {
     el.classList.toggle("is-active", el.dataset.route === name);
   });
 
-  topTitle.textContent = ROUTES[name];
+  topTitle.textContent = state.isPreview ? "ホーム（プレビュー）" : ROUTES[name];
   topTools.hidden = name !== "home";
 
   if (name === "profile") renderProfilePage();
   if (name === "settings") renderSettings();
-  if (name === "home" && !state.posts.length && !state.loadingFirst) loadFirstPage();
+  if (name === "home") {
+    renderPreviewBanner();
+    if (!state.posts.length && !state.loadingFirst) loadFirstPage();
+  }
 
   window.scrollTo({ top: 0, behavior: "auto" });
 }
@@ -852,6 +1017,7 @@ function resetTimeline() {
 
 function timelineUrl(before, extra) {
   const params = new URLSearchParams({ limit: String(PAGE), service: state.filter });
+  if (state.isPreview) params.set("preview", "1");
   if (before) params.set("before", before);
   if (extra) Object.entries(extra).forEach(([k, v]) => params.set(k, v));
   return `/api/timeline?${params.toString()}`;
@@ -1386,8 +1552,42 @@ async function boot() {
     console.error("status", err);
     state.auth = null;
   }
+  if (swipePrev) {
+    swipePrev.addEventListener("click", () => {
+      if (!swipeTrack) return;
+      const card = swipeTrack.querySelector(".swipe-card");
+      const delta = card ? card.offsetWidth + 14 : 320;
+      swipeTrack.scrollBy({ left: -delta, behavior: "smooth" });
+    });
+  }
+  if (swipeNext) {
+    swipeNext.addEventListener("click", () => {
+      if (!swipeTrack) return;
+      const card = swipeTrack.querySelector(".swipe-card");
+      const delta = card ? card.offsetWidth + 14 : 320;
+      swipeTrack.scrollBy({ left: delta, behavior: "smooth" });
+    });
+  }
+  if (swipeDots) {
+    swipeDots.addEventListener("click", (e) => {
+      const dot = e.target.closest(".swipe-dot");
+      if (!dot || !swipeTrack) return;
+      const idx = Number(dot.dataset.index) || 0;
+      const cards = swipeTrack.querySelectorAll(".swipe-card");
+      if (cards[idx]) {
+        cards[idx].scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
+        updateActiveDot(idx);
+      }
+    });
+  }
+
   const raw = location.hash.replace(/^#\/?/, "").split("?")[0];
-  if (raw === "top" || raw === "lp" || raw === "gate") {
+  const linkedCount = state.auth && state.auth.linked ? Object.keys(state.auth.linked).length : 0;
+
+  if (raw === "preview") {
+    state.isPreview = true;
+    openApp();
+  } else if (raw === "top" || raw === "lp" || raw === "gate" || linkedCount === 0) {
     showGate();
   } else {
     openApp();

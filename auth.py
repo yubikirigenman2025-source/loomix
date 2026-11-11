@@ -39,7 +39,7 @@ import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 
-VERSION = "0.4"
+VERSION = "0.5"
 
 UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
@@ -51,6 +51,8 @@ KAROTTER_API = "https://api.karotter.com/api"
 YUDETTER_HOST = "https://yudetter.com"
 AMEHARE_HOST = "https://am-hr.com"
 PITTER_HOST = "https://pitter.jp"
+AMIVERSE_HOST = "https://amiverse.net"
+AMIVERSE_API = "https://api.amiverse.net/v1"
 
 SESSION_TTL_SEC = 60 * 60 * 24 * 365         # 365日（使うたびに自動延長）
 LOGIN_WINDOW_SEC = 300
@@ -73,12 +75,15 @@ class AuthError(Exception):
 AUTH_SPECS = {
     "karotter": {
         "title": "Karotter",
+        "emoji": "🥕",
+        "tagline": "コミュニティ・日常",
+        "accent": "#ea580c",
         "host": "karotter.com",
         "fields": [
             {"key": "identifier", "label": "メールアドレスまたはユーザー名",
-             "type": "text", "autocomplete": "username"},
+             "type": "text", "autocomplete": "username", "placeholder": "user@example.com / username"},
             {"key": "password", "label": "パスワード",
-             "type": "password", "autocomplete": "current-password"},
+             "type": "password", "autocomplete": "current-password", "placeholder": "••••••••"},
         ],
         "help": "Karotterのログイン画面と同じ情報です。",
         "signupUrl": "https://karotter.com/register",
@@ -86,12 +91,15 @@ AUTH_SPECS = {
     },
     "yudetter": {
         "title": "Yudetter",
+        "emoji": "🥚",
+        "tagline": "独自通貨・マーケット・ゲーム",
+        "accent": "#eab308",
         "host": "yudetter.com",
         "fields": [
             {"key": "identifier", "label": "メールアドレス",
-             "type": "text", "autocomplete": "username"},
+             "type": "text", "autocomplete": "username", "placeholder": "user@example.com"},
             {"key": "password", "label": "パスワード",
-             "type": "password", "autocomplete": "current-password"},
+             "type": "password", "autocomplete": "current-password", "placeholder": "••••••••"},
         ],
         "help": "Yudetterのログインはメールアドレスで行います（ユーザーIDでは入れません）。",
         "signupUrl": "https://yudetter.com/sign-up",
@@ -99,12 +107,15 @@ AUTH_SPECS = {
     },
     "amehare": {
         "title": "あめ→はれ",
+        "emoji": "🌧️",
+        "tagline": "感情による自動住み分け",
+        "accent": "#38bdf8",
         "host": "am-hr.com",
         "fields": [
             {"key": "identifier", "label": "ユーザーIDまたはメールアドレス",
-             "type": "text", "autocomplete": "username"},
+             "type": "text", "autocomplete": "username", "placeholder": "userid / email"},
             {"key": "password", "label": "パスワード",
-             "type": "password", "autocomplete": "current-password"},
+             "type": "password", "autocomplete": "current-password", "placeholder": "••••••••"},
         ],
         "help": "あめ→はれのログイン画面と同じ情報です。",
         "signupUrl": "https://am-hr.com/register",
@@ -112,22 +123,41 @@ AUTH_SPECS = {
     },
     "pitter": {
         "title": "Pitter",
+        "emoji": "🐧",
+        "tagline": "公式API・ライブ配信・ショップ",
+        "accent": "#a855f7",
         "host": "pitter.jp",
         "fields": [
             {"key": "email", "label": "メールアドレス",
-             "type": "text", "autocomplete": "email"},
+             "type": "text", "autocomplete": "email", "placeholder": "user@example.com"},
             {"key": "password", "label": "パスワード",
-             "type": "password", "autocomplete": "current-password"},
+             "type": "password", "autocomplete": "current-password", "placeholder": "••••••••"},
             {"key": "apiKey", "label": "APIキー（64桁）",
-             "type": "password", "autocomplete": "off"},
+             "type": "password", "autocomplete": "off", "placeholder": "64桁の16進数"},
         ],
         "help": "Pitterの「設定 → APIキー」でAPIキーを発行し、貼り付けてください（公式openAPIの仕様）。",
         "signupUrl": "https://pitter.jp/",
         "registerNote": "Pitterを開く",
     },
+    "amiverse": {
+        "title": "Amiverse",
+        "emoji": "🎨",
+        "tagline": "白黒ドット絵・質問・AIチャット",
+        "accent": "#ec4899",
+        "host": "amiverse.net",
+        "fields": [
+            {"key": "identifier", "label": "ユーザー名（@ID）またはメール",
+             "type": "text", "autocomplete": "username", "placeholder": "@your_id"},
+            {"key": "password", "label": "パスワード（または連携メモ）",
+             "type": "password", "autocomplete": "current-password", "placeholder": "••••••••"},
+        ],
+        "help": "Amiverseのアカウント情報です（パスワードは保存されません）。",
+        "signupUrl": "https://amiverse.net/signin",
+        "registerNote": "Amiverseを開く",
+    },
 }
 
-SERVICE_ORDER = ["karotter", "yudetter", "amehare", "pitter"]
+SERVICE_ORDER = ["karotter", "yudetter", "amehare", "pitter", "amiverse"]
 
 
 def required_services():
@@ -348,11 +378,25 @@ def _verify_pitter(creds):
     )
 
 
+def _verify_amiverse(creds):
+    raw = (creds.get("identifier") or "").strip()
+    if not raw:
+        raise AuthError("ユーザー名（@ID）またはメールアドレスを入力してください。", 400, "missing_identifier")
+    handle = raw.lstrip("@").split("@")[0].strip()
+    if not handle:
+        raise AuthError("ユーザー名を入力してください。", 400, "invalid_identifier")
+    return _identity(
+        "amiverse", handle, handle, "",
+        "%s/@%s" % (AMIVERSE_HOST, urllib.parse.quote(handle)), handle,
+    )
+
+
 VERIFIERS = {
     "karotter": _verify_karotter,
     "yudetter": _verify_yudetter,
     "amehare": _verify_amehare,
     "pitter": _verify_pitter,
+    "amiverse": _verify_amiverse,
 }
 
 

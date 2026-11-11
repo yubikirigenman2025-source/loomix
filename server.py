@@ -41,7 +41,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 
 PORT = int(os.environ.get("PORT", 8080))
 PUBLIC_DIR = os.path.join(os.path.dirname(__file__), "public")
-VERSION = "0.4"
+VERSION = "0.5"
 
 SSL_CTX = ssl.create_default_context()
 
@@ -60,6 +60,7 @@ DEPTH = {
     "yudetter": 100,
     "amehare": 80,
     "pitter": 80,
+    "amiverse": 80,
 }
 
 # 各サービスの1ページあたりの取得件数（先方APIの実測値）
@@ -68,6 +69,7 @@ PAGE_SIZE = {
     "yudetter": 40,
     "amehare": 40,
     "pitter": 20,
+    "amiverse": 30,
 }
 
 # 相手先サーバーへの負荷制御
@@ -83,6 +85,7 @@ SERVICES = [
     {"id": "yudetter", "name": "Yudetter", "label": "yudetter", "url": "https://yudetter.com"},
     {"id": "amehare", "name": "あめ→はれ", "label": "am-hr", "url": "https://am-hr.com"},
     {"id": "pitter", "name": "Pitter", "label": "pitter", "url": "https://pitter.jp"},
+    {"id": "amiverse", "name": "Amiverse", "label": "amiverse", "url": "https://amiverse.net"},
 ]
 SERVICE_BY_ID = {s["id"]: s for s in SERVICES}
 SERVICE_IDS = [s["id"] for s in SERVICES]
@@ -464,11 +467,136 @@ def pitter_page(cursor=None):
     return posts, nxt
 
 
+# ---------------------------------------------------------------- Amiverse
+
+AMIVERSE_HOST = "https://amiverse.net"
+AMIVERSE_API = "https://api.amiverse.net/v1"
+
+_amiverse_auth_cache = {"csrf": None, "cookie": None, "expires": 0}
+_amiverse_auth_lock = threading.Lock()
+
+
+def _get_amiverse_auth():
+    now = time.time()
+    with _amiverse_auth_lock:
+        if _amiverse_auth_cache["csrf"] and _amiverse_auth_cache["cookie"] and now < _amiverse_auth_cache["expires"]:
+            return _amiverse_auth_cache["csrf"], _amiverse_auth_cache["cookie"]
+
+        req = urllib.request.Request(
+            "%s/start" % AMIVERSE_API,
+            headers=browser_headers({
+                "Accept": "application/json",
+                "Referer": AMIVERSE_HOST + "/",
+            })
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=10, context=SSL_CTX) as res:
+                data = json.loads(res.read().decode("utf-8"))
+                csrf = data.get("csrf_token")
+                cookie_header = res.headers.get("Set-Cookie", "")
+                cookie = cookie_header.split(";")[0] if cookie_header else ""
+                _amiverse_auth_cache["csrf"] = csrf
+                _amiverse_auth_cache["cookie"] = cookie
+                _amiverse_auth_cache["expires"] = now + 1800
+                return csrf, cookie
+        except Exception as e:
+            logging.warning("amiverse /v1/start failed: %s", e)
+            return None, None
+
+
+def amiverse_post(p):
+    aid = p.get("aid") or ""
+    account = p.get("account") or {}
+    handle = str(account.get("name_id") or "")
+    display_name = account.get("name") or handle
+    avatar_url = abs_url(AMIVERSE_HOST, account.get("icon_url"))
+    profile_url = ("%s/@%s" % (AMIVERSE_HOST, handle)) if handle else AMIVERSE_HOST
+    content = p.get("content") or ""
+
+    media = []
+    for d in (p.get("drawings") or []):
+        if isinstance(d, dict) and d.get("image_url"):
+            media.append(abs_url(AMIVERSE_HOST, d["image_url"]))
+    for m in (p.get("media") or []):
+        if isinstance(m, dict) and m.get("url"):
+            media.append(abs_url(AMIVERSE_HOST, m["url"]))
+
+    created_raw = p.get("created_at")
+    created_dt = parse_iso(created_raw)
+    created_at = iso_z(created_dt) if created_dt else None
+
+    quote = p.get("quote")
+    is_quote = bool(p.get("quote_presence") or quote)
+
+    return make_post(
+        service="amiverse",
+        id="amiverse_%s" % aid,
+        rawId=aid,
+        authorId=handle,
+        username=handle,
+        displayName=display_name,
+        avatarUrl=avatar_url,
+        profileUrl=profile_url,
+        content=content,
+        media=media,
+        createdAt=created_at,
+        url="%s/posts/%s" % (AMIVERSE_HOST, aid),
+        isReply=bool(p.get("reply_presence")),
+        isQuote=is_quote,
+        likes=p.get("reactions_count", 0),
+        reposts=p.get("diffuses_count", 0),
+        replies=p.get("replies_count", 0),
+        views=p.get("views_count", 0),
+    )
+
+
+def amiverse_page(cursor=None):
+    """Amiverse のおすすめフィードを取得。"""
+    csrf, cookie = _get_amiverse_auth()
+    if not csrf:
+        return [], None
+
+    payload = {}
+    if cursor:
+        payload["cursor"] = str(cursor)
+
+    body = json.dumps(payload).encode("utf-8")
+    hdrs = browser_headers({
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+        "X-CSRF-Token": csrf,
+        "Cookie": cookie,
+        "Origin": AMIVERSE_HOST,
+        "Referer": AMIVERSE_HOST + "/",
+    })
+
+    req = urllib.request.Request("%s/feeds/recommended" % AMIVERSE_API, data=body, headers=hdrs, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=12, context=SSL_CTX) as res:
+            data = json.loads(res.read().decode("utf-8"))
+    except Exception as e:
+        logging.warning("amiverse feed fetch failed: %s", e)
+        return [], None
+
+    raw_posts = data.get("posts") or []
+    posts = [amiverse_post(p) for p in raw_posts]
+
+    nxt = None
+    feed_items = data.get("feed") or []
+    if feed_items and len(raw_posts) >= PAGE_SIZE["amiverse"]:
+        nxt = feed_items[-1].get("post_aid")
+    elif raw_posts and len(raw_posts) >= PAGE_SIZE["amiverse"]:
+        nxt = raw_posts[-1].get("aid")
+
+    return posts, nxt
+
+
 PAGERS = {
     "karotter": karotter_page,
     "yudetter": yudetter_page,
     "amehare": amehare_page,
     "pitter": pitter_page,
+    "amiverse": amiverse_page,
 }
 
 
@@ -1179,6 +1307,17 @@ def _profile(service, handle):
         })
         posts = [pitter_post(p) for p in (data.get("posts") or [])]
 
+    elif service == "amiverse":
+        profile.update({
+            "username": handle,
+            "displayName": handle,
+            "bio": "Amiverse アカウント",
+            "avatarUrl": "",
+            "profileUrl": "%s/@%s" % (AMIVERSE_HOST, urllib.parse.quote(handle)),
+            "stats": {},
+        })
+        posts = timeline_posts_for(service, handle)
+
     else:
         return None
 
@@ -1319,6 +1458,7 @@ def api_dispatch(method, path, query, body, headers, client_ip=""):
 
     if path == "/api/timeline":
         service = qget("service", "all")
+        preview = qget("preview", "0") not in ("", "0", "false")
         force = qget("refresh", "0") not in ("", "0", "false")
         try:
             limit = int(qget("limit", str(DEFAULT_LIMIT)) or DEFAULT_LIMIT)
@@ -1326,7 +1466,8 @@ def api_dispatch(method, path, query, body, headers, client_ip=""):
             limit = DEFAULT_LIMIT
         before = qget("before")
         try:
-            result = timeline_page(before, limit, service, force=force, allowed=linked_services)
+            allowed = None if preview else linked_services
+            result = timeline_page(before, limit, service, force=force, allowed=allowed)
         except ValueError as e:
             return 400, {"ok": False, "error": str(e)}, "no-store"
         except Exception as e:  # noqa: BLE001
