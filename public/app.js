@@ -249,7 +249,8 @@ function linkCard(service, manage) {
       ? `<a class="lc-link" href="${esc(linked.profileUrl)}" target="_blank" rel="noopener noreferrer">本家で開く</a>`
       : "";
     const unlink = manage
-      ? `<button class="btn" type="button" data-unlink="${esc(service)}">解除</button>`
+      ? `<button class="btn" type="button" data-unlink="${esc(service)}">解除</button>
+         <button class="btn" type="button" data-relink="${esc(service)}" title="ブロック・ミュートを取り直すために連携し直します">連携し直す</button>`
       : "";
     return `<article class="link-card is-linked" data-service="${esc(service)}">
       <div class="lc-head">
@@ -502,6 +503,31 @@ async function unlink(service) {
     loadFirstPage({ force: true });
   } catch (err) {
     if (err.message !== "auth_required") toast(err.message || "解除できませんでした");
+  }
+}
+
+// ブロック・ミュートを取り直すための連携やり直し。一度外して、そのSNSのフォームを出す
+async function relink(service) {
+  if (!window.confirm(`${providerName(service)}の連携をやり直しますか？（ブロック・ミュート設定を取り直します）`)) return;
+  try {
+    const data = await apiFetch("/api/auth/unlink", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ service }),
+    });
+    state.auth = data.auth;
+    if (data.token !== undefined) setToken(data.token);
+    renderSideUser();
+    renderSettings();
+    const card = document.querySelector(`.link-card[data-service="${service}"]`);
+    if (card) {
+      card.scrollIntoView({ block: "center" });
+      const input = card.querySelector("input");
+      if (input) input.focus();
+    }
+    toast(`${providerName(service)}のログイン情報を入れて「連携する」を押してください`);
+  } catch (err) {
+    if (err.message !== "auth_required") toast(err.message || "連携をやり直せませんでした");
   }
 }
 
@@ -866,7 +892,7 @@ async function loadSafetyStatus() {
       const name = (state.auth.providers[sid] || {}).title || sid;
       if (!s) {
         return `<div class="set-row">
-          <div><div class="k">${esc(name)} ・ 未取得</div><div class="d">この機能より前に連携したアカウントです。「解除」してからもう一度連携すると反映されます。</div></div>
+          <div><div class="k">${esc(name)} ・ 未取得</div><div class="d">この機能より前に連携したアカウントです。「連携し直す」を押してログインし直すと反映されます。</div></div>
           <span class="v">—</span>
         </div>`;
       }
@@ -1573,6 +1599,13 @@ document.addEventListener("click", (e) => {
   if (unlinkBtn) {
     e.preventDefault();
     unlink(unlinkBtn.dataset.unlink);
+    return;
+  }
+
+  const relinkBtn = e.target.closest("[data-relink]");
+  if (relinkBtn) {
+    e.preventDefault();
+    relink(relinkBtn.dataset.relink);
     return;
   }
 
