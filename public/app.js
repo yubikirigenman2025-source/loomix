@@ -308,26 +308,15 @@ function swipeLoginCard(service) {
   const spec = providerSpec(service);
   const linked = state.auth && state.auth.linked && state.auth.linked[service];
   const label = spec.title || service;
-  const emoji = spec.emoji || "🌐";
-  const tagline = spec.tagline || "";
-  const accent = spec.accent || "#3b82f6";
-  const host = spec.host || "";
 
   if (linked) {
     const avatar = linked.avatarUrl
-      ? `<img src="${esc(linked.avatarUrl)}" alt="" referrerpolicy="no-referrer" loading="lazy" style="width:36px;height:36px;border-radius:50%;object-fit:cover">`
-      : `<span class="ph" style="width:36px;height:36px;display:inline-flex;align-items:center;justify-content:center;background:#181818;border-radius:50%">${esc((linked.displayName || linked.handle || "?").slice(0, 1))}</span>`;
-    return `<article class="swipe-card is-linked" data-service="${esc(service)}" style="--card-accent: ${accent}">
-      <div class="swipe-card-accent"></div>
+      ? `<img src="${esc(linked.avatarUrl)}" alt="" referrerpolicy="no-referrer" loading="lazy">`
+      : `<span class="ph">${esc((linked.displayName || linked.handle || "?").slice(0, 1))}</span>`;
+    return `<article class="swipe-card is-linked" data-service="${esc(service)}">
       <div class="swipe-card-head">
-        <div class="swipe-card-title-wrap">
-          <span class="swipe-card-emoji">${emoji}</span>
-          <div>
-            <div class="swipe-card-name">${esc(label)}</div>
-            <div class="swipe-card-host">${esc(host)}</div>
-          </div>
-        </div>
-        <span class="swipe-card-tag on" style="color:#cfcfcf;border-color:#333">連携中</span>
+        <span class="swipe-card-name">${esc(label)}</span>
+        <span class="swipe-card-state">連携中</span>
       </div>
       <div class="swipe-card-body">
         <div class="lc-who">
@@ -337,8 +326,8 @@ function swipeLoginCard(service) {
             <div class="who-handle">@${esc(linked.handle || "")}</div>
           </div>
         </div>
-        <div class="lc-actions" style="margin-top:14px">
-          <a class="cta" href="#/home" style="padding:6px 14px;font-size:12px">タイムラインを見る</a>
+        <div class="lc-actions">
+          <a class="cta" href="#/home">タイムライン</a>
           <button class="btn" type="button" data-unlink="${esc(service)}">連携解除</button>
         </div>
       </div>
@@ -356,32 +345,22 @@ function swipeLoginCard(service) {
     </div>`;
   }).join("");
 
-  const help = spec.help ? `<p class="lc-help">${esc(spec.help)}</p>` : "";
   const signup = spec.signupUrl
-    ? `<a class="lc-link" href="${esc(spec.signupUrl)}" target="_blank" rel="noopener noreferrer">${esc(spec.registerNote || "アカウント作成")} ↗</a>`
+    ? `<a class="lc-link" href="${esc(spec.signupUrl)}" target="_blank" rel="noopener noreferrer">新規登録</a>`
     : "";
 
-  return `<article class="swipe-card" data-service="${esc(service)}" style="--card-accent: ${accent}">
-    <div class="swipe-card-accent"></div>
+  return `<article class="swipe-card" data-service="${esc(service)}">
     <div class="swipe-card-head">
-      <div class="swipe-card-title-wrap">
-        <span class="swipe-card-emoji">${emoji}</span>
-        <div>
-          <div class="swipe-card-name">${esc(label)}</div>
-          <div class="swipe-card-host">${esc(host)}</div>
-        </div>
-      </div>
-      <span class="swipe-card-tag">${esc(tagline)}</span>
+      <span class="swipe-card-name">${esc(label)}</span>
     </div>
     <div class="swipe-card-body">
       <form class="lc-form" data-link-form data-service="${esc(service)}">
         ${fields}
-        ${help}
+        <p class="lc-error" data-error></p>
         <div class="lc-actions">
-          <button class="btn solid" type="submit" style="background:${accent};border-color:${accent};color:#fff">${esc(label)}でログインして連携</button>
+          <button class="btn solid" type="submit">ログイン</button>
           ${signup}
         </div>
-        <p class="lc-error" data-error></p>
       </form>
     </div>
   </article>`;
@@ -449,7 +428,7 @@ function renderGate() {
   }
 
   if (gateStatus) {
-    gateStatus.textContent = `${linkedCount} / ${totalCount} 連携中（連携は任意です）`;
+    gateStatus.textContent = `連携は任意です · ${linkedCount} / ${totalCount} 連携中`;
   }
 }
 

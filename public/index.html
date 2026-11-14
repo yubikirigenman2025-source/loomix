@@ -6,7 +6,7 @@
 <meta name="theme-color" content="#000000">
 <meta name="description" content="Karotter / Yudetter / あめ→はれ / Pitter / Amiverse のタイムラインをひとつの流れに。">
 <title>Loomix</title>
-<link rel="stylesheet" href="style.css?v=050">
+<link rel="stylesheet" href="style.css?v=060">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' fill='%23000'/%3E%3Cpath d='M14 20h36M14 32h36M14 44h36' stroke='%23bbb' stroke-width='2'/%3E%3C/svg%3E">
 </head>
 <body>
@@ -16,31 +16,14 @@
   <div class="gate-wrap">
 
     <header class="gate-head">
-      <div class="brand">
-        <span class="brand-name">Loomix</span>
-        <span class="brand-ver">0.5</span>
-      </div>
-      <div class="gate-head-right">
-        <span class="gate-tag">国産SNS統合ブリッジ</span>
-        <a class="gate-preview-link" href="#/preview">プレビュー閲覧 ↗</a>
-      </div>
+      <h1 class="gate-brand">Loomix</h1>
+      <a class="gate-preview-link" href="#/preview">プレビューを見る</a>
     </header>
 
-    <section class="hero">
-      <div class="hero-badge">5つの国産SNSに対応</div>
-      <h1>5つのSNSを、<br>ひとつの流れに。</h1>
-      <p class="hero-lead">
-        Karotter / Yudetter / あめ→はれ / Pitter / Amiverse のタイムラインを、
-        時系列でひとつに織り交ぜるリーダーです。
-      </p>
-
+    <section class="gate-main">
       <!-- 横スワイプ ログインカード セクション -->
       <div class="swipe-section" aria-label="ログインするSNSの選択">
         <div class="swipe-section-header">
-          <div class="swipe-title-wrap">
-            <h2 class="swipe-title">どのSNSでログインしますか？</h2>
-            <p class="swipe-sub">カードを横にスワイプして連携するSNSを選択してください</p>
-          </div>
           <div class="swipe-controls">
             <button class="swipe-btn" id="swipePrev" type="button" aria-label="前のSNS">‹</button>
             <button class="swipe-btn" id="swipeNext" type="button" aria-label="次のSNS">›</button>
@@ -54,44 +37,10 @@
         <div class="swipe-dots" id="swipeDots" role="tablist" aria-label="SNSカード切り替え"></div>
       </div>
 
-      <div class="hero-actions">
-        <a class="cta cta-sub" href="#/preview" id="previewBtn">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="15" height="15" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
-          <span>連携せずに公開タイムラインをプレビュー</span>
-        </a>
-      </div>
-      <p class="hero-subtext">※アカウント連携は任意です。連携しなくても各SNSの公開タイムラインをそのままご覧いただけます。</p>
       <p class="gate-notice" id="gateNotice" hidden></p>
     </section>
 
-    <section class="hero-points" aria-label="Loomixでできること">
-      <div>
-        <span class="hp-k">🔒 パスワード非保持</span>
-        <span class="hp-v">入力情報は先方APIのログイン確認にのみ使用し、サーバーやディスクには一切残しません</span>
-      </div>
-      <div>
-        <span class="hp-k">🧵 パーソナライズ</span>
-        <span class="hp-v">連携したSNSだけの投稿が時系列で合体。未連携のSNSはタイムラインに流れません</span>
-      </div>
-      <div>
-        <span class="hp-k">⚡ 1年間セッション維持</span>
-        <span class="hp-v">クッキーとローカルストレージの二重保持により、アクセスするたびに自動延長されます</span>
-      </div>
-    </section>
-
-    <section class="gate-note">
-      <h2>安心してお使いいただくために</h2>
-      <p>
-        Loomixはサーバー側に各SNSのパスワードを保存しません。発行される署名付きセッショントークンはお使いのブラウザ内にのみ安全に保持されます。
-      </p>
-      <p>
-        Pitterは公式openAPIの仕様上、パスワードに加えてAPIキー（Pitterの「設定 → APIキー」で発行）が必要です。
-        アカウントをお持ちでない場合は、各カードの「登録」リンクからいつでも新規開設できます。
-      </p>
-    </section>
-
     <footer class="gate-foot">
-      <span>Loomix 0.5 · 国産SNS統合ブリッジ</span>
       <span id="gateStatus">連携状況を確認しています</span>
     </footer>
 
@@ -204,6 +153,6 @@
 
 <div class="toast" id="toast" hidden></div>
 
-<script src="app.js?v=050"></script>
+<script src="app.js?v=060"></script>
 </body>
 </html>
