@@ -946,19 +946,11 @@ a { color: inherit; }
   scroll-snap-type: x mandatory;
   -webkit-overflow-scrolling: touch;
   scroll-behavior: smooth;
-  padding: 4px 2px 14px;
-  scrollbar-width: thin;
-  scrollbar-color: #242424 transparent;
+  padding: 4px 2px 10px;
+  scrollbar-width: none;
 }
 .swipe-track::-webkit-scrollbar {
-  height: 5px;
-}
-.swipe-track::-webkit-scrollbar-track {
-  background: transparent;
-}
-.swipe-track::-webkit-scrollbar-thumb {
-  background: #242424;
-  border-radius: 3px;
+  display: none;
 }
 
 .swipe-card {
