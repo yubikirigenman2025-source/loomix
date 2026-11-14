@@ -395,12 +395,13 @@ function setupSwipeListeners() {
     scrollTimeout = setTimeout(() => {
       const cards = swipeTrack.querySelectorAll(".swipe-card");
       if (!cards.length) return;
-      const trackCenter = swipeTrack.scrollLeft + swipeTrack.offsetWidth / 2;
+      const trackRect = swipeTrack.getBoundingClientRect();
+      const trackCenter = trackRect.left + trackRect.width / 2;
       let closestIdx = 0;
       let minDiff = Infinity;
       cards.forEach((card, i) => {
-        const cardCenter = card.offsetLeft + card.offsetWidth / 2;
-        const diff = Math.abs(trackCenter - cardCenter);
+        const rect = card.getBoundingClientRect();
+        const diff = Math.abs(trackCenter - (rect.left + rect.width / 2));
         if (diff < minDiff) {
           minDiff = diff;
           closestIdx = i;
