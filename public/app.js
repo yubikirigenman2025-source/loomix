@@ -457,7 +457,13 @@ async function submitLink(form) {
     });
     if (data.token) setToken(data.token);
     state.auth = data.auth;
-    toast(`${providerName(service)}と連携しました`);
+    const s = data.safety || {};
+    const hidden = (s.blocked || 0) + (s.muted || 0) + (s.words || 0);
+    if (hidden > 0) {
+      toast(`${providerName(service)}と連携しました（ブロック・ミュート${hidden}件を反映）`);
+    } else {
+      toast(`${providerName(service)}と連携しました`);
+    }
 
     if (inApp) {
       renderSideUser();
@@ -747,7 +753,6 @@ function renderSettings() {
   const providers = Object.keys(auth.providers || {});
   const linked = Object.keys(auth.linked || {}).length;
   const total = providers.length;
-
   viewSettings.innerHTML = `
     <div class="page-head">
       <h2>設定</h2>
@@ -774,6 +779,17 @@ function renderSettings() {
 
       ${linked > 0 ? `
       <div class="set-group" style="margin-top:32px">
+        <h3 class="set-section-title">ブロック・ミュート</h3>
+        <p class="set-section-desc">連携している各SNSでブロック・ミュートした相手と、ミュートワードに当てはまる投稿は、この端末のタイムラインから隠されます（本家の設定はそのままです）。</p>
+        <div id="safetyStatus" style="margin-top:12px"><span class="v">読み込み中…</span></div>
+        <div class="set-row" style="margin-top:12px">
+          <div><div class="k">設定を取り直す</div><div class="d">各SNSでブロック・ミュートを変えたときに押します。</div></div>
+          <button class="btn" id="safetyRefresh" type="button">再取得</button>
+        </div>
+      </div>` : ""}
+
+      ${linked > 0 ? `
+      <div class="set-group" style="margin-top:32px">
         <h3 class="set-section-title">セッション</h3>
         <div class="set-row">
           <div><div class="k">連携を始めた日時</div></div>
@@ -790,7 +806,7 @@ function renderSettings() {
       </div>` : ""}
 
       <p class="set-note">
-        Loomix 0.4 ・ パスワードは保存していません。連携を解除するとLoomix側の記録も消えます。<br>
+        Loomix 0.6 ・ パスワードは保存していません。連携を解除するとLoomix側の記録も消えます。<br>
         <a href="https://github.com/yubikirigenman2025-source/loomix" target="_blank" rel="noopener noreferrer">リポジトリ</a>
       </p>
     </div>
@@ -816,6 +832,91 @@ function renderSettings() {
 
   const out = document.getElementById("settingsLogout");
   if (out) out.addEventListener("click", logout);
+
+  if (linked > 0) {
+    loadSafetyStatus();
+    const refresh = document.getElementById("safetyRefresh");
+    if (refresh) refresh.addEventListener("click", refreshSafety);
+  }
+}
+
+const SAFETY_STATUS_LABEL = {
+  ok: "反映中",
+  partial: "一部のみ反映",
+  unavailable: "取得できません",
+  needs_relink: "要再連携",
+  error: "取得できません",
+};
+
+async function loadSafetyStatus() {
+  const box = document.getElementById("safetyStatus");
+  if (!box) return;
+  const linked = Object.keys((state.auth && state.auth.linked) || {});
+  try {
+    const data = await apiFetch("/api/safety");
+    if (!box.isConnected) return;
+    const found = data.services || {};
+    const order = linked.concat(Object.keys(found).filter((s) => !linked.includes(s)));
+    if (!order.length) {
+      box.innerHTML = `<span class="v">連携しているSNSがありません。</span>`;
+      return;
+    }
+    box.innerHTML = order.map((sid) => {
+      const s = found[sid];
+      const name = (state.auth.providers[sid] || {}).title || sid;
+      if (!s) {
+        return `<div class="set-row">
+          <div><div class="k">${esc(name)} ・ 未取得</div><div class="d">この機能より前に連携したアカウントです。「解除」してからもう一度連携すると反映されます。</div></div>
+          <span class="v">—</span>
+        </div>`;
+      }
+      const label = SAFETY_STATUS_LABEL[s.status] || s.status;
+      const counts = [];
+      if (s.blocked) counts.push(`ブロック ${s.blocked}`);
+      if (s.muted) counts.push(`ミュート ${s.muted}`);
+      if (s.words) counts.push(`ワード ${s.words}`);
+      const detail = s.error ? esc(s.error) : (counts.join("・") || "設定なし");
+      return `<div class="set-row">
+        <div><div class="k">${esc(name)} ・ ${esc(label)}</div><div class="d">${detail}</div></div>
+        <span class="v">${s.fetchedAt ? esc(fullTime(s.fetchedAt)) : "—"}</span>
+      </div>`;
+    }).join("");
+  } catch (err) {
+    if (err.message === "auth_required") return;
+    if (box.isConnected) box.innerHTML = `<span class="v">取得できませんでした</span>`;
+  }
+}
+
+async function refreshSafety() {
+  const btn = document.getElementById("safetyRefresh");
+  if (btn) { btn.disabled = true; btn.textContent = "取得中…"; }
+  try {
+    const data = await apiFetch("/api/safety/refresh", { method: "POST" });
+    if (data && data.ok) {
+      toast("ブロック・ミュート設定を取り直しました");
+      await loadSafetyStatus();
+      reloadTimelineSoft();
+    } else {
+      toast((data && data.error) || "取り直せませんでした");
+      await loadSafetyStatus();
+    }
+  } catch (err) {
+    if (err.message !== "auth_required") toast(err.message || "取り直せませんでした");
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = "再取得"; }
+  }
+}
+
+function reloadTimelineSoft() {
+  // フィルタが変わったので、先頭から読み直す（アーカイブはそのまま使い回す）
+  state.posts = [];
+  state.ids = new Set();
+  state.nextBefore = null;
+  state.hasMore = true;
+  state.emptyStreak = 0;
+  state.nextAllowedAt = 0;
+  feedEl.innerHTML = "";
+  if (state.route === "home") loadFirstPage({ force: true }).catch(() => {});
 }
 
 /* ------------------------------------------------------------ post markup */

@@ -39,7 +39,7 @@ import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 
-VERSION = "0.5"
+VERSION = "0.6"
 
 UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
@@ -245,6 +245,14 @@ def _identity(service, handle, display_name, avatar_url, profile_url, user_id=""
 
 # ---------------------------------------------------------------- 各SNSの検証
 
+def _jar_cookie(jar):
+    """CookieJar を Cookie ヘッダ1行に（サーバー間の再取得に使う）。"""
+    try:
+        return "; ".join("%s=%s" % (c.name, c.value) for c in jar)
+    except Exception:
+        return ""
+
+
 def _verify_karotter(creds):
     import http.cookiejar
     jar = http.cookiejar.CookieJar()
@@ -262,11 +270,17 @@ def _verify_karotter(creds):
         raise AuthError(msg, 401, "invalid_credentials")
     user = data.get("user") or {}
     handle = user.get("username") or creds["identifier"]
-    return _identity(
+    ident = _identity(
         "karotter", handle, user.get("displayName") or handle,
         _avatar(KAROTTER_HOST, user.get("avatarUrl")),
         "%s/%s" % (KAROTTER_HOST, handle), user.get("id"),
     )
+    return {
+        "identity": ident,
+        # ブロック・ミュート一覧の取得にだけ使う（保存はメモリのみ）
+        "session": {"token": data.get("accessToken") or "",
+                    "cookie": _jar_cookie(jar)},
+    }
 
 
 def _verify_yudetter(creds):
@@ -295,11 +309,15 @@ def _verify_yudetter(creds):
             me = _json(st2, me)
             user = me.get("user") or me
     handle = user.get("username") or creds["identifier"]
-    return _identity(
+    ident = _identity(
         "yudetter", handle, user.get("displayName") or handle,
         _avatar(YUDETTER_HOST, user.get("avatarUrl")),
         "%s/%s" % (YUDETTER_HOST, handle), user.get("id"),
     )
+    return {
+        "identity": ident,
+        "session": {"token": data.get("token") or "", "cookie": _jar_cookie(jar)},
+    }
 
 
 def _verify_amehare(creds):
@@ -330,11 +348,15 @@ def _verify_amehare(creds):
             ses = _json(st2, ses)
             user = ses.get("me") or ses.get("user") or {}
     uid = user.get("userId") or user.get("id") or creds["identifier"]
-    return _identity(
+    ident = _identity(
         "amehare", uid, user.get("displayName") or uid,
         _avatar(AMEHARE_HOST, user.get("avatarUrl")),
         "%s/users/%s" % (AMEHARE_HOST, urllib.parse.quote(str(uid))), uid,
     )
+    return {
+        "identity": ident,
+        "session": {"token": token or "", "cookie": _jar_cookie(jar)},
+    }
 
 
 def _verify_pitter(creds):
@@ -371,11 +393,12 @@ def _verify_pitter(creds):
     name = user.get("user_name") or user.get("display_name") or user.get("name") or handle
     avatar = (user.get("user_icon_url") or user.get("icon_url")
               or user.get("avatar_url") or user.get("avatarUrl"))
-    return _identity(
+    ident = _identity(
         "pitter", handle, name, _avatar(PITTER_HOST, avatar),
         "%s/?profile=%s" % (PITTER_HOST, urllib.parse.quote(str(handle))),
         user.get("id") or handle,
     )
+    return {"identity": ident, "session": {"token": token}}
 
 
 def _verify_amiverse(creds):
@@ -385,10 +408,12 @@ def _verify_amiverse(creds):
     handle = raw.lstrip("@").split("@")[0].strip()
     if not handle:
         raise AuthError("ユーザー名を入力してください。", 400, "invalid_identifier")
-    return _identity(
+    ident = _identity(
         "amiverse", handle, handle, "",
         "%s/@%s" % (AMIVERSE_HOST, urllib.parse.quote(handle)), handle,
     )
+    # Amiverse はLoomixの連携がID入力のみ（認証なし）なので、セッション材料は無い
+    return {"identity": ident, "session": {}}
 
 
 VERIFIERS = {
@@ -611,8 +636,31 @@ def status(token):
     st = _status_for(claims)
     if claims:
         # スライディングセッション：アクセスするたびに1年後へ延長したトークンを返す
-        st["token"] = _encode(_new_claims(claims.get("services") or {}, created=claims.get("iat")))
+        fresh = _new_claims(claims.get("services") or {}, created=claims.get("iat"))
+        _carry(claims, fresh)
+        st["token"] = _encode(fresh)
     return st
+
+
+# 延長・連携変更のときに持ち回る、サービス以外のクレーム
+_CARRY_KEYS = ("safetyKey",)
+
+
+def _carry(src, dst):
+    for k in _CARRY_KEYS:
+        if (src or {}).get(k):
+            dst[k] = src.get(k)
+    return dst
+
+
+def claims(token):
+    """検証済みのクレーム（呼び出し側でユーザー固有の設定を引くため）。"""
+    return _decode(token)
+
+
+def safety_key(token):
+    c = _decode(token)
+    return (c or {}).get("safetyKey") or ""
 
 
 def login(payload, token="", client_ip=""):
@@ -636,17 +684,33 @@ def login(payload, token="", client_ip=""):
                             400, "missing_field")
         creds[key] = value
 
-    identity = VERIFIERS[service](creds)
+    res = VERIFIERS[service](creds)
+    identity = res.get("identity") or {}
+    material = res.get("session") or {}
 
     current = _decode(token)
     services = dict((current or {}).get("services") or {})
     services[service] = identity
     claims = _new_claims(services, created=(current or {}).get("iat"))
+    _carry(current or {}, claims)
+    if not claims.get("safetyKey"):
+        claims["safetyKey"] = secrets.token_hex(8)
     new_token = _encode(claims)
+
+    # ブロック・ミュート一覧をこの場で取得しておく（失敗してもログインは成功させる）
+    try:
+        import safety
+        safety_summary = safety.register(
+            claims["safetyKey"], service, material,
+            handle=identity.get("handle") or "", user_id=identity.get("userId") or "",
+        )
+    except Exception as e:  # noqa: BLE001 - 付加機能なのでログインは止めない
+        logging.warning("safety register failed: %s", e)
+        safety_summary = None
 
     logging.info("auth linked: service=%s handle=%s", service, identity.get("handle"))
     return {"token": new_token, "service": service, "account": _public_identity(identity),
-            "auth": _status_for(claims)}
+            "auth": _status_for(claims), "safety": safety_summary}
 
 
 def unlink(token, service):
@@ -657,12 +721,29 @@ def unlink(token, service):
         raise AuthError("連携するSNSを選んでください。", 400, "bad_service")
     services = dict(claims.get("services") or {})
     services.pop(service, None)
+    try:
+        import safety
+        safety.drop(claims.get("safetyKey") or "", service)
+    except Exception as e:  # noqa: BLE001
+        logging.warning("safety drop failed: %s", e)
     if not services:
         return {"token": "", "auth": _status_for(None)}
-    new_token = _encode(_new_claims(services, created=claims.get("iat")))
+    fresh = _new_claims(services, created=claims.get("iat"))
+    _carry(claims, fresh)
+    new_token = _encode(fresh)
     return {"token": new_token, "auth": _status_for(_decode(new_token))}
 
 
 def logout(token):
-    """資格情報を持たないのでサーバー側で消すものは無い（ブラウザがトークンを捨てる）。"""
+    """資格情報を持たないのでサーバー側で消すものは無い（ブラウザがトークンを捨てる）。
+
+    プリバシー上の理由で、このユーザーのブロック・ミュート設定とセッション材料は消す。
+    """
+    key = safety_key(token)
+    if key:
+        try:
+            import safety
+            safety.forget(key)
+        except Exception as e:  # noqa: BLE001
+            logging.warning("safety forget failed: %s", e)
     return {"ok": True}

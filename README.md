@@ -1,9 +1,40 @@
 # Loomix (ルーミックス)
 
-Karotter / Yudetter / あめ→はれ / Pitter のタイムラインを、ひとつの流れに織り交ぜるリーダー。
+Karotter / Yudetter / あめ→はれ / Pitter / Amiverse のタイムラインを、ひとつの流れに織り交ぜるリーダー。
 
 - 本番: https://loomix-z8wt.onrender.com
 - リポジトリ: https://github.com/yubikirigenman2025-source/loomix
+
+## v0.6 の変更: ブロック・ミュートの反映
+
+連携している各SNSの「ブロック」「ミュート」「ミュートワード」を、Loomix のタイムラインに反映する（`safety.py`）。ブロック・ミュートした相手の投稿は表示せず、ミュートワードに一致する他人の投稿も隠す。本家の設定は変更しない（読み取りのみ）。
+
+### サービス別の対応状況（2026-11-14 実測・クライアント解析）
+
+| サービス | ブロック | ミュート | ミュートワード | 取得元 |
+|---|---|---|---|---|
+| Karotter | ○ | ○ | ○ | `GET /api/follow/block` / `/api/follow/mute`（`{users:[{id,username}]}`）、`GET /api/auth/me` の `mutedKeywords` |
+| Yudetter | ○ | − | − | `GET /api/users/me/blocks`（要ログイン）。ミュート機能自体が無い |
+| あめ→はれ | ○ | ○ | ○ | `GET /api/safety` の `blockedUsers` / `mutedUsers` / `muteWords` |
+| Pitter | △ | − | − | 公式 openAPI の `action=me` に `blocked_handles` が含まれる場合のみ。一覧の正規経路は Web のセッションAPI（`system/Post.php?action=blocked_users`）で、openAPI からは届かない |
+| Amiverse | × | × | × | Loomix の連携がID入力のみ（認証なし）のため、ユーザー固有の設定を取得できない |
+
+### 仕組み
+
+- **共有アーカイブ（`.cache/*.jsonl`）は触らない。** ブロック・ミュートは「応答を組み立てる段階」で投稿を間引くだけなので、他のユーザーや過去ログには影響しない（`Archive.newest/older_than` に `keep` 判定を渡している）。
+- 対象リストは**ログイン時に取得**して `.cache/safety.json` に保存し、以後は10分より古くなると裏で取り直す（`/api/timeline` の応答は待たせない）。
+- 取得に使う各SNSのセッション（Bearer / Cookie）は**メモリだけ**に置き、ディスクには書かない。サーバーが再起動してメモリが消えても、保存済みリストでフィルタは効き続ける（更新だけが次のログインまで止まる）。
+- ラベルはハンドル（`@username`）とIDの両方で照合する。ミュートワードは大文字小文字を区別せず、**自分の投稿には適用しない**（本家の挙動に合わせる）。
+- ユーザーとの紐付けは、セッショントークン内の `safetyKey`（16桁の乱数）だけ。リスト本体はサーバー側に置くので、Cookie は膨らまない。ログアウトで削除する。
+
+### 追加API
+
+| メソッド | パス | 内容 |
+|---|---|---|
+| `GET` | `/api/safety` | 反映状況（サービスごとの `status` / `blocked` / `muted` / `words` / `fetchedAt` / `error`、`canRefresh`） |
+| `POST` | `/api/safety/refresh` | 保存済みセッションで全サービスを取り直す。材料が失効していれば `code: needs_relink` |
+
+タイムライン応答にも `safety: {active, services:{...}, filtered:N}` が付く。設定画面には「ブロック・ミュート」欄（状態＋再取得）を置いた。
 
 ## v0.4 の変更
 
@@ -170,6 +201,8 @@ PORT=3000 python3 server.py
 work/loomix/
 ├── server.py           # BFF（Python標準ライブラリ）
 ├── auth.py             # 各SNSのログイン検証とLoomixセッション
+├── safety.py           # ブロック・ミュートの取得とタイムラインへの反映
+├── test_safety.py      # 上記のオフライン検証（python3 test_safety.py）
 ├── public/             # index.html / style.css / app.js
 ├── api/index.py        # Vercel 用エントリ（server.py を共有）
 ├── Dockerfile          # Render 用
@@ -189,3 +222,5 @@ work/loomix/
 - 署名鍵は環境変数 `LOOMIX_SESSION_SECRET` に置く（未設定なら `.cache/session-secret` を自動生成。Render の無料プランは再起動でディスクが消えるため、その場合はトークンが無効になり再連携が必要）。
 - ログアウト・連携解除はブラウザのトークンを破棄する。サーバーは資格情報を持たないので、発行済みの古いトークンは期限まで有効（ゲートは公開情報の入口を整える仕組みで、秘密の保護境界ではない）。
 - ログイン試行は同一IPあたり5分で15回までに制限している（`X-Forwarded-For` の先頭を使用）。
+- ブロック・ミュートの反映は、各SNSの内部APIが返す一覧に依存する。Yudetter の `/api/users/me/blocks` は応答の形が未実測のため寛容に解釈しており、形が変われば `/api/safety` の `status` が `error`/0件になる。Pitter・Amiverse は上表のとおり取得できない（本家では非表示でもLoomixには出る）。
+- リポスト／引用は「投稿した人」で判定する。引用元の作者だけをブロックしている場合、Loomix は引用カードを別に描かないので追加の間引きはしていない。

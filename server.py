@@ -11,6 +11,10 @@ v0.3:
   - サイト内プロフィール表示用 /api/user
   - gzip 応答
 
+v0.6:
+  - 連携アカウントのブロック・ミュートを反映（safety.py）。共有アーカイブは触らず、
+    応答を組み立てる段階で間引く。GET /api/safety, POST /api/safety/refresh
+
 v0.4:
   - 連携認証（auth.py）: 各SNSの自分のアカウントでログインしてはじめてタイムラインが開く
     POST /api/auth/login, GET /api/auth/status, POST /api/auth/unlink, POST /api/auth/logout
@@ -19,6 +23,7 @@ v0.4:
 """
 
 import auth
+import safety
 
 import collections
 import gzip
@@ -41,7 +46,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 
 PORT = int(os.environ.get("PORT", 8080))
 PUBLIC_DIR = os.path.join(os.path.dirname(__file__), "public")
-VERSION = "0.5"
+VERSION = "0.6"
 
 SSL_CTX = ssl.create_default_context()
 
@@ -110,6 +115,7 @@ def _cache_dir():
 
 CACHE_DIR = _cache_dir()
 auth.configure(CACHE_DIR)
+safety.configure(CACHE_DIR)
 
 
 def browser_headers(extra=None):
@@ -670,15 +676,26 @@ class Archive:
                 self._sorted = items
             return self._sorted
 
-    def newest(self, limit):
-        return [p for _, p in self._items()[:limit]]
+    def newest(self, limit, keep=None):
+        out = []
+        for _dt, p in self._items():
+            if keep is not None and not keep(p):
+                continue
+            out.append(p)
+            if len(out) >= limit:
+                break
+        return out
 
-    def older_than(self, ts, limit, respect_floor=True):
+    def older_than(self, ts, limit, respect_floor=True, keep=None):
         """ts より古い投稿（境界含む）。respect_floor なら探索済みの範囲だけ。
 
         先方の並びには、古い投稿のリポストが日付だけ古く混ざることがある。
         探索済みの床より下は「まだ見ていない時代」なので、床を越えて返すと
         ページの下端が飛んでしまう。床より上だけを返す。
+
+        keep は表示する投稿の判定（ブロック・ミュート）。共有アーカイブ自体は
+        そのまま残るので、間引くのはこの戻り値だけ。limit 件に満ちるまで
+        古い方向へ読み進める。
         """
         floor = self.floor_ts if (respect_floor and not self.exhausted) else None
         out = []
@@ -686,6 +703,8 @@ class Archive:
             if dt > ts:
                 continue
             if floor is not None and dt < floor:
+                continue
+            if keep is not None and not keep(p):
                 continue
             out.append(p)
             if len(out) >= limit:
@@ -1059,19 +1078,27 @@ def resolve_before(raw):
     return None
 
 
-def newest_page(limit, service, allowed=None):
+def newest_page(limit, service, allowed=None, keep=None):
     sids = _sids(service, allowed=allowed)
     if not sids:
         return [], None
     posts = []
     for sid in sids:
-        posts.extend(ARCHIVE[sid].newest(limit))
+        posts.extend(ARCHIVE[sid].newest(limit, keep=keep))
     posts = _merged(posts)[:limit]
     next_ts = parse_iso(posts[-1].get("createdAt")) if posts else None
+    if next_ts is None:
+        # 非表示設定で全部消えても、そこで止まらず古い投稿へ進めるようにする
+        for sid in sids:
+            top = ARCHIVE[sid].newest(1)
+            if top:
+                ts = parse_iso(top[0].get("createdAt"))
+                if ts and (next_ts is None or ts > next_ts):
+                    next_ts = ts
     return posts, next_ts
 
 
-def older_page(ts, limit, service, allowed=None):
+def older_page(ts, limit, service, allowed=None, keep=None):
     """ts より古い投稿を limit 件。足りなければアーカイブを必要な分だけ伸ばす。
 
     全サービスが ts より古い範囲を漏れなく持っていないと、欠けた投稿を
@@ -1098,7 +1125,7 @@ def older_page(ts, limit, service, allowed=None):
 
     posts = []
     for sid in sids:
-        posts.extend(ARCHIVE[sid].older_than(ts, limit))
+        posts.extend(ARCHIVE[sid].older_than(ts, limit, keep=keep))
     posts = _merged(posts)[:limit]
     save_state()
     return posts, False
@@ -1128,7 +1155,7 @@ def prefetch(sids, ts, limit):
     threading.Thread(target=run, daemon=True).start()
 
 
-def timeline_page(before_raw, limit, service, force=False, allowed=None):
+def timeline_page(before_raw, limit, service, force=False, allowed=None, keep=None, safety_info=None):
     ensure_archive()
     limit = max(1, min(int(limit or DEFAULT_LIMIT), MAX_LIMIT))
     if service not in (None, "", "all") and service not in SERVICE_BY_ID:
@@ -1160,13 +1187,13 @@ def timeline_page(before_raw, limit, service, force=False, allowed=None):
         ts = resolve_before(before_raw)
         if ts is None:
             raise ValueError("before を解釈できません（ISO8601 か投稿IDを指定してください）")
-        posts, partial = older_page(ts, limit, service, allowed=allowed)
+        posts, partial = older_page(ts, limit, service, allowed=allowed, keep=keep)
         next_ts = parse_iso(posts[-1].get("createdAt")) if posts else ts
         has_more = _has_more(sids, next_ts)
         if posts and not partial:
             prefetch(sids, next_ts, limit)
     else:
-        posts, next_ts = newest_page(limit, service, allowed=allowed)
+        posts, next_ts = newest_page(limit, service, allowed=allowed, keep=keep)
         partial = False
         has_more = _has_more(sids, next_ts)
         if posts:
@@ -1189,7 +1216,17 @@ def timeline_page(before_raw, limit, service, force=False, allowed=None):
         "partial": partial,
         "linkedServices": list(allowed or []),
         "retryAfterMs": 1200 if (partial and not posts) else None,
+        "safety": _safety_block(keep, safety_info),
     }
+
+
+def _safety_block(keep, safety_info):
+    """非表示設定の適用状況（応答に添えるだけの情報）。"""
+    if not safety_info:
+        return None
+    out = dict(safety_info)
+    out["filtered"] = int(getattr(keep, "hidden", 0) or 0) if keep is not None else 0
+    return out
 
 
 def timeline_posts_for(service, handle):
@@ -1455,6 +1492,23 @@ def api_dispatch(method, path, query, body, headers, client_ip=""):
 
     gate = auth.status(token)
     linked_services = set((gate.get("linked") or {}).keys())
+    s_key = auth.safety_key(token)
+
+    if path == "/api/safety":
+        if not s_key:
+            return 200, {"ok": True, "active": False, "services": {}, "canRefresh": False}, "no-store"
+        return 200, safety.summary(s_key), "no-store"
+
+    if path == "/api/safety/refresh":
+        if method != "POST":
+            return 405, {"ok": False, "error": "POST で送ってください"}, "no-store"
+        if not s_key:
+            return 401, {"ok": False, "error": "連携が見つかりません。", "code": "auth_required"}, "no-store"
+        try:
+            return 200, safety.refresh(s_key), "no-store"
+        except Exception as e:  # noqa: BLE001
+            logging.warning("safety refresh failed: %s", e)
+            return 502, {"ok": False, "error": "ブロック・ミュート設定を取得できませんでした"}, "no-store"
 
     if path == "/api/timeline":
         service = qget("service", "all")
@@ -1465,9 +1519,29 @@ def api_dispatch(method, path, query, body, headers, client_ip=""):
         except Exception:
             limit = DEFAULT_LIMIT
         before = qget("before")
+
+        # 連携アカウントのブロック・ミュートを反映（共有アーカイブは触らない）
+        keep = None
+        safety_info = None
+        if s_key:
+            try:
+                hider = safety.hider(s_key)
+                summary = safety.summary(s_key)
+                if hider is not None:
+                    keep = hider
+                    safety_info = {"active": True, "services": {
+                        sid: {k: v for k, v in (item or {}).items() if k in ("status", "blocked", "muted", "words")}
+                        for sid, item in (summary.get("services") or {}).items()}}
+                else:
+                    safety_info = None
+                safety.maybe_refresh(s_key)
+            except Exception as e:  # noqa: BLE001 - 非表示設定の失敗でTLを止めない
+                logging.warning("safety filter unavailable: %s", e)
+
         try:
             allowed = None if preview else linked_services
-            result = timeline_page(before, limit, service, force=force, allowed=allowed)
+            result = timeline_page(before, limit, service, force=force, allowed=allowed,
+                                   keep=keep, safety_info=safety_info)
         except ValueError as e:
             return 400, {"ok": False, "error": str(e)}, "no-store"
         except Exception as e:  # noqa: BLE001
