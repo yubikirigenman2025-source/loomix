@@ -130,6 +130,10 @@ class ParserTest(unittest.TestCase):
                 payload, keys=("users", "blocks", "blockedUsers", "items", "data", "list", "blocking")))
             self.assertIn("a", [u["handle"] for u in got], payload)
 
+    def test_yudetter_unknown_payload_is_flagged_not_silently_empty(self):
+        self.assertTrue(safety._has_nonempty_list({"blocks": [{"weird": 1}]}))
+        self.assertFalse(safety._has_nonempty_list({"users": []}))
+
     def test_pitter_blocked_handles(self):
         payload = {"ok": True, "data": {"user": {"handle": "me", "blocked_handles": ["x", "@y"]}}}
         raw = safety._deep_find(payload, "blocked_handles")

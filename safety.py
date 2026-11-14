@@ -156,7 +156,8 @@ def _request(method, url, headers=None, body=None, timeout=FETCH_TIMEOUT):
 
 _HANDLE_KEYS = ("username", "handle", "user_handle", "name_id", "userid", "userId",
                 "screen_name", "user_name")
-_ID_KEYS = ("id", "userId", "user_id", "aid", "account_id", "accountId")
+_ID_KEYS = ("id", "userId", "user_id", "aid", "account_id", "accountId",
+            "blockedId", "blocked_id", "mutedId", "muted_id", "blockedUserId")
 
 
 def _first(node, keys):
@@ -250,6 +251,17 @@ def _words(raw):
     return out[:200]
 
 
+def _has_nonempty_list(payload, depth=0):
+    """解釈できなかった応答に、中身のあるリストがあったか（可視化のため）。"""
+    if depth > 4 or payload is None:
+        return False
+    if isinstance(payload, list):
+        return len(payload) > 0
+    if isinstance(payload, dict):
+        return any(_has_nonempty_list(v, depth + 1) for v in payload.values())
+    return False
+
+
 def _dedupe(users):
     seen = set()
     out = []
@@ -314,9 +326,10 @@ def _yudetter(material, handle):
     if st != 200:
         return {"status": "error", "error": "HTTP %s%s" % (st or "-", (" " + err) if err else "")}
     blocked = _dedupe(_user_list(data, keys=("users", "blocks", "blockedUsers", "items", "data", "list", "blocking")))
-    # 応答の形が想定と違っても、投稿者を拾えるだけ拾う（表示漏れより安全側）
-    return {"status": "ok", "blocked": blocked, "muted": [], "words": [],
-            "error": None if blocked or data is not None else "応答を解釈できませんでした"}
+    if not blocked and _has_nonempty_list(data):
+        return {"status": "partial", "blocked": [], "muted": [], "words": [],
+                "error": "ブロック一覧の応答形式を解釈できませんでした（0件として扱います）"}
+    return {"status": "ok", "blocked": blocked, "muted": [], "words": [], "error": None}
 
 
 def _amehare(material, handle):
