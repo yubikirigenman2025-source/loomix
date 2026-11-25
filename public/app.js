@@ -325,6 +325,7 @@ function linkCard(service, manage) {
     return `<div class="field">
       <label for="${id}">${esc(f.label)}</label>
       <input id="${id}" name="${esc(f.key)}" type="${esc(f.type || "text")}"
+             placeholder="${esc(f.placeholder || "")}"
              autocomplete="${esc(f.autocomplete || "off")}" autocapitalize="off"
              spellcheck="false" required>
     </div>`;
