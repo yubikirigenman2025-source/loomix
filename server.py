@@ -85,13 +85,30 @@ REQUEST_BUDGET_SEC = 20.0   # /api/timeline 1回の応答で外部APIを待つ�
 MAX_ROUNDS = 8              # 1回の応答でアーカイブを伸ばすラウンド数
 ARCHIVE_CAP = 6000          # 1サービスあたりの保持上限（メモリ保護）
 
+# 各SNSのアイコン。ダウンロードせず、公式サイト上の画像URLをそのまま参照する
+# （favicon ではなく、ブランドロゴ・アプリアイコン・manifest内アイコンを選定）。
 SERVICES = [
-    {"id": "karotter", "name": "Karotter", "label": "karotter", "url": "https://karotter.com"},
-    {"id": "yudetter", "name": "Yudetter", "label": "yudetter", "url": "https://yudetter.com"},
-    {"id": "amehare", "name": "あめ→はれ", "label": "am-hr", "url": "https://am-hr.com"},
-    {"id": "pitter", "name": "Pitter", "label": "pitter", "url": "https://pitter.jp"},
-    {"id": "amiverse", "name": "Amiverse", "label": "amiverse", "url": "https://amiverse.net"},
+    {"id": "karotter", "name": "Karotter", "label": "karotter", "url": "https://karotter.com",
+     "iconUrl": "https://karotter.com/brand-assets/logo/karotter-k.png",
+     "iconKind": "brand-logo"},
+    {"id": "yudetter", "name": "Yudetter", "label": "yudetter", "url": "https://yudetter.com",
+     "iconUrl": "https://yudetter.com/logo.png",
+     "iconKind": "app-logo"},
+    {"id": "amehare", "name": "あめ→はれ", "label": "am-hr", "url": "https://am-hr.com",
+     "iconUrl": "https://am-hr.com/icons/icon-180.png",
+     "iconKind": "apple-touch-icon"},
+    {"id": "pitter", "name": "Pitter", "label": "pitter", "url": "https://pitter.jp",
+     "iconUrl": "https://pitter.jp/system/image/icon.png",
+     "iconKind": "brand-logo"},
+    {"id": "amiverse", "name": "Amiverse", "label": "amiverse", "url": "https://amiverse.net",
+     "iconUrl": "https://amiverse.net/static-assets/images/amiverse-logo-alpha-400.png",
+     "iconKind": "brand-logo"},
 ]
+
+# ログインカード・設定画面の見出しにも同じアイコンを出せるよう、認証仕様へ引き継ぐ
+for _svc in SERVICES:
+    if _svc["id"] in auth.AUTH_SPECS:
+        auth.AUTH_SPECS[_svc["id"]]["iconUrl"] = _svc["iconUrl"]
 SERVICE_BY_ID = {s["id"]: s for s in SERVICES}
 SERVICE_IDS = [s["id"] for s in SERVICES]
 

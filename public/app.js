@@ -15,6 +15,27 @@ const ROUTES = {
   settings: "設定",
 };
 
+// 各SNSのアイコンは公式サイト上の画像をそのまま参照する（ダウンロード・保存はしない）。
+// favicon ではなく、ブランドロゴ・アプリアイコン・manifest内アイコンを使う。
+// サーバー（/api/auth/status の providers、/api/timeline の services）が iconUrl を返すが、
+// それが届かない場面でも表示できるよう控えを持つ。
+const SERVICE_ICONS = {
+  karotter: "https://karotter.com/brand-assets/logo/karotter-k.png",
+  yudetter: "https://yudetter.com/logo.png",
+  amehare: "https://am-hr.com/icons/icon-180.png",
+  pitter: "https://pitter.jp/system/image/icon.png",
+  amiverse: "https://amiverse.net/static-assets/images/amiverse-logo-alpha-400.png",
+};
+
+// 画像が読めなかったときの代わり（モノグラム）
+const SERVICE_MONOGRAM = {
+  karotter: "K",
+  yudetter: "Y",
+  amehare: "雨",
+  pitter: "P",
+  amiverse: "A",
+};
+
 const state = {
   token: localStorage.getItem(TOKEN_KEY) || "",
   auth: null,
@@ -37,6 +58,7 @@ const state = {
   fetchedAt: null,
   errors: {},
   profileCache: new Map(),
+  serviceIcons: {},
   isPreview: false,
 };
 
@@ -151,6 +173,31 @@ function providerName(service) {
   return providerSpec(service).title || service;
 }
 
+function serviceIconUrl(service) {
+  const spec = providerSpec(service);
+  return (spec && spec.iconUrl) || state.serviceIcons[service] || SERVICE_ICONS[service] || "";
+}
+
+// 角丸の箱に入れたアイコン。読み込みに失敗したらモノグラムに差し替わる。
+function svcIcon(service, cls) {
+  const url = serviceIconUrl(service);
+  const letter = SERVICE_MONOGRAM[service] || (service || "?").slice(0, 1).toUpperCase();
+  const extra = cls ? ` ${cls}` : "";
+  if (!url) {
+    return `<span class="svc-ico is-letter${extra}" aria-hidden="true">${esc(letter)}</span>`;
+  }
+  return `<span class="svc-ico${extra}" data-s="${esc(service)}" aria-hidden="true">` +
+    `<img class="svc-ico-img" src="${esc(url)}" data-letter="${esc(letter)}" alt="" ` +
+    `loading="lazy" decoding="async" referrerpolicy="no-referrer"></span>`;
+}
+
+// タイムラインなどで使う「アイコン＋サービス名」の小さなタグ
+function svcChip(service, label) {
+  const name = label === undefined ? providerName(service) : label;
+  const text = name ? `<span class="svc-name">${esc(name)}</span>` : "";
+  return `<span class="svc" title="${esc(providerName(service))}">${svcIcon(service)}${text}</span>`;
+}
+
 /* ------------------------------------------------------------ auth */
 
 function setToken(token) {
@@ -254,7 +301,7 @@ function linkCard(service, manage) {
       : "";
     return `<article class="link-card is-linked" data-service="${esc(service)}">
       <div class="lc-head">
-        <div><div class="lc-name">${esc(label)}</div>${host}</div>
+        <div><div class="lc-name">${svcIcon(service, "svc-ico-lg")}<span>${esc(label)}</span></div>${host}</div>
         ${stateBadge}
       </div>
       <div class="lc-body">
@@ -288,7 +335,7 @@ function linkCard(service, manage) {
 
   return `<article class="link-card" data-service="${esc(service)}">
     <div class="lc-head">
-      <div><div class="lc-name">${esc(label)}</div>${host}</div>
+      <div><div class="lc-name">${svcIcon(service, "svc-ico-lg")}<span>${esc(label)}</span></div>${host}</div>
       ${stateBadge}
     </div>
     <div class="lc-body">
@@ -316,7 +363,7 @@ function swipeLoginCard(service) {
       : `<span class="ph">${esc((linked.displayName || linked.handle || "?").slice(0, 1))}</span>`;
     return `<article class="swipe-card is-linked" data-service="${esc(service)}">
       <div class="swipe-card-head">
-        <span class="swipe-card-name">${esc(label)}</span>
+        <span class="swipe-card-name">${svcIcon(service, "svc-ico-lg")}<span>${esc(label)}</span></span>
         <span class="swipe-card-state">連携中</span>
       </div>
       <div class="swipe-card-body">
@@ -352,7 +399,7 @@ function swipeLoginCard(service) {
 
   return `<article class="swipe-card" data-service="${esc(service)}">
     <div class="swipe-card-head">
-      <span class="swipe-card-name">${esc(label)}</span>
+      <span class="swipe-card-name">${svcIcon(service, "svc-ico-lg")}<span>${esc(label)}</span></span>
     </div>
     <div class="swipe-card-body">
       <form class="lc-form" data-link-form data-service="${esc(service)}">
@@ -696,7 +743,7 @@ function profileCard(acc) {
         <div class="pf-card-name" role="button" tabindex="0" data-profile="${key}" data-service="${esc(acc.service)}" data-handle="${esc(acc.handle)}">${esc(acc.displayName || acc.handle)}</div>
         <div class="pf-card-sub">
           <span>@${esc(acc.handle)}</span>
-          <span class="svc">${esc(spec.host || spec.title || acc.service)}</span>
+          ${svcChip(acc.service, spec.host || spec.title || acc.service)}
         </div>
       </div>
     </div>
@@ -994,7 +1041,7 @@ function postMarkup(post) {
       <div class="meta">
         <span class="name" role="button" tabindex="0" data-profile="${key}" data-service="${post.service}" data-handle="${esc(a.username || a.id)}">${esc(a.displayName || a.username || "不明")}</span>
         ${a.username ? `<span class="handle">@${esc(a.username)}</span>` : ""}
-        <span class="svc">${esc(post.serviceLabel || post.serviceName || "")}</span>
+        ${svcChip(post.service, post.serviceLabel || post.serviceName || "")}
         <a class="time" href="${esc(post.url)}" target="_blank" rel="noopener noreferrer" title="${esc(fullTime(post.createdAt))}">${esc(timeLabel(post.createdAt))}</a>
       </div>
       ${replyMarkup(post)}
@@ -1131,6 +1178,9 @@ function timelineUrl(before, extra) {
 }
 
 function adoptFirstPage(data) {
+  (data.services || []).forEach((s) => {
+    if (s && s.id && s.iconUrl) state.serviceIcons[s.id] = s.iconUrl;
+  });
   state.posts = data.posts || [];
   state.ids = new Set(state.posts.map((p) => p.id));
   state.nextBefore = data.nextBefore || null;
@@ -1454,7 +1504,7 @@ function renderProfile(data) {
           <div class="pf-name">${esc(p.displayName || p.username || "")}</div>
           <div class="pf-sub">
             ${p.username ? `<span>@${esc(p.username)}</span>` : ""}
-            <span class="svc">${esc(p.serviceLabel || "")}</span>
+            ${svcChip(p.service, p.serviceLabel || p.serviceName || "")}
           </div>
         </div>
       </div>
@@ -1633,6 +1683,19 @@ document.addEventListener("click", (e) => {
     window.open(card.dataset.url, "_blank", "noopener");
   }
 });
+
+// アイコン画像が読めない（ホットリンク制限・オフライン等）ときはモノグラムに差し替える
+document.addEventListener("error", (e) => {
+  const img = e.target;
+  if (!img || img.tagName !== "IMG" || !img.classList.contains("svc-ico-img")) return;
+  const box = img.closest(".svc-ico");
+  const letter = img.dataset.letter || "?";
+  img.remove();
+  if (box) {
+    box.classList.add("is-letter");
+    box.textContent = letter;
+  }
+}, true);
 
 document.addEventListener("keydown", (e) => {
   if (e.key !== "Enter" && e.key !== " ") return;

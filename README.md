@@ -5,6 +5,22 @@ Karotter / Yudetter / あめ→はれ / Pitter / Amiverse のタイムライン�
 - 本番: https://loomix-z8wt.onrender.com
 - リポジトリ: https://github.com/yubikirigenman2025-source/loomix
 
+## 各SNSのアイコン表示
+
+タイムラインの各投稿、未連携ゲートの横スワイプカード、設定の連携アカウント一覧、プロフィールに、そのSNSのアイコンを出す。画像は**ダウンロードせずに**各公式サイトのURLをそのまま参照する（`<img src="https://…">`）ため、リポジトリにも端末にもアイコン画像は置いていない。favicon は使わず、ブランドロゴ・アプリアイコン・manifest 内アイコンを選んでいる。
+
+| サービス | アイコンURL | 種類（出どころ） |
+|---|---|---|
+| Karotter | `https://karotter.com/brand-assets/logo/karotter-k.png` | ブランドロゴ（`karotter-k.svg` のPNG版・1024px） |
+| Yudetter | `https://yudetter.com/logo.png` | アプリ内ヘッダーのロゴ画像（アプリのロゴそのもの。favicon.png と同一ファイル） |
+| あめ→はれ | `https://am-hr.com/icons/icon-180.png` | `apple-touch-icon`（manifest の `icon-512.png` も同絵柄） |
+| Pitter | `https://pitter.jp/system/image/icon.png` | サイトヘッダーのロゴ画像（1000px・透過） |
+| Amiverse | `https://amiverse.net/static-assets/images/amiverse-logo-alpha-400.png` | ブランドロゴ（透過PNG。manifest は `amiverse-logo-400.webp`） |
+
+- 定義は `server.py` の `SERVICES[].iconUrl`（`/api/services`・`/api/timeline` の `services[]` に出る）と、`auth.AUTH_SPECS[].iconUrl`（`/api/auth/status` の `providers` に出る）。フロントは `public/app.js` の `SERVICE_ICONS` を控えに持ち、APIが届かない場面でも表示できる。
+- ダークUIに合わせて 13〜20px の角丸チップ（`#0e0e0e`＋内側1pxリング）に入れ、サービスごとに余白の大きいロゴだけ CSS の `transform: scale()` で拡大している（画像は切らない）。
+- 読み込みに失敗したとき（ホットリンク制限・オフライン等）は、その場でモノグラム（K / Y / 雨 / P / A）に差し替える。
+
 ## v0.6 の変更: ブロック・ミュートの反映
 
 連携している各SNSの「ブロック」「ミュート」「ミュートワード」を、Loomix のタイムラインに反映する（`safety.py`）。ブロック・ミュートした相手の投稿は表示せず、ミュートワードに一致する他人の投稿も隠す。本家の設定は変更しない（読み取りのみ）。
