@@ -63,11 +63,12 @@ Karotter / Yudetter / あめ→はれ / Pitter / Amiverse のタイムライン�
   | サービス | ログイン経路 | 入力 |
   |---|---|---|
   | Karotter | `POST https://api.karotter.com/api/auth/login` | メールアドレスまたはユーザー名＋パスワード |
-  | Yudetter | `POST https://yudetter.com/api/auth/sign-in/email`（`Origin: https://yudetter.com` 必須） | メールアドレス＋パスワード |
+  | Yudetter | `POST https://yudetter.com/api/users/sign-in-by-username`（ユーザー名）／`POST https://yudetter.com/api/auth/sign-in/email`（メールアドレス）。どちらも `Origin: https://yudetter.com` 必須 | メールアドレスまたはユーザー名＋パスワード |
   | あめ→はれ | `POST https://am-hr.com/api/auth/login`（`Origin: https://am-hr.com` 必須） | ユーザーIDまたはメール＋パスワード |
   | Pitter | `POST https://pitter.jp/system/openAPI.php?action=login` → `action=me` | メール＋パスワード＋APIキー（64桁hex） |
 
 - **パスワードは保存しない**。検証に使うだけで、ディスクにもメモリにも残さない。
+- Yudetter の入力欄は「メールアドレスまたはユーザー名」。本家のログイン画面と同じ判定で、先頭が `@` か `@` を含まない値をユーザー名として `sign-in-by-username` に、`@` を含むメールアドレスを `sign-in/email` に送る（ユーザー名は先頭の `@` を外して送る）。
 - 連携状況は **HMAC 署名したトークン**（`lx1.<claims>.<sig>`、60日）としてブラウザの localStorage にだけ置く。サーバーにセッションストアを持たないので、再デプロイや Free プランのスピンダウンでもログイン状態が残る（署名鍵 `LOOMIX_SESSION_SECRET` を固定した場合。未設定なら再起動で無効になり再連携）。
 - `/api/timeline` と `/api/user` は連携が揃うまで **401 `auth_required`**。ゲートを通過できないとデータは取れない。
 - 運用で必要なSNSだけにしたい場合は環境変数 `LOOMIX_AUTH_REQUIRED=karotter,pitter` のように指定する（既定は4つすべて）。署名鍵は `LOOMIX_SESSION_SECRET`、未指定なら `.cache/session-secret` を自動生成。

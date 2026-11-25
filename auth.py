@@ -13,9 +13,11 @@ Loomix 連携認証 (v0.4)
 各SNSの認証仕様（実測）:
   Karotter   POST https://api.karotter.com/api/auth/login {identifier, password}
              -> 200 {accessToken, user{id, username, displayName, avatarUrl}}
-  Yudetter   POST https://yudetter.com/api/auth/sign-in/email {email, password}
+  Yudetter   POST https://yudetter.com/api/auth/sign-in/email {email, password}   … メールアドレス
+             POST https://yudetter.com/api/users/sign-in-by-username {username, password}  … ユーザー名
+             （本家のログイン画面は「@で始まる」か「@を含まない」入力をユーザー名として扱う）
              Origin: https://yudetter.com が無いと 403（許可されていないアクセス元です）
-             -> {token, user{username, displayName, avatarUrl}}
+             -> {token, user{username, displayName, avatarUrl}} / セッションCookieも発行される
   あめ→はれ  POST https://am-hr.com/api/auth/login {identifier, password}
              Origin: https://am-hr.com が無いと 403（Cross-site request was blocked.）
              -> {sessionToken, user...}
@@ -96,12 +98,12 @@ AUTH_SPECS = {
         "accent": "#eab308",
         "host": "yudetter.com",
         "fields": [
-            {"key": "identifier", "label": "メールアドレス",
-             "type": "text", "autocomplete": "username", "placeholder": "user@example.com"},
+            {"key": "identifier", "label": "メールアドレスまたはユーザー名",
+             "type": "text", "autocomplete": "username", "placeholder": "user@example.com / username"},
             {"key": "password", "label": "パスワード",
              "type": "password", "autocomplete": "current-password", "placeholder": "••••••••"},
         ],
-        "help": "Yudetterのログインはメールアドレスで行います（ユーザーIDでは入れません）。",
+        "help": "Yudetterのログイン画面と同じ情報です（メールアドレスでもユーザー名でも入れます）。",
         "signupUrl": "https://yudetter.com/sign-up",
         "registerNote": "Yudetterで登録",
     },
@@ -283,32 +285,68 @@ def _verify_karotter(creds):
     }
 
 
+def _yudetter_identifier(value):
+    """本家のログイン画面と同じ判定。
+
+    先頭が「@」か、値に「@」を含まないものはユーザー名、それ以外はメールアドレス。
+    返り値は ("username" | "email", 送信する値)。
+    """
+    raw = str(value or "").strip()
+    if raw.startswith("@") or "@" not in raw:
+        return "username", raw.lstrip("@")
+    return "email", raw.lower()
+
+
 def _verify_yudetter(creds):
     import http.cookiejar
+    kind, identifier = _yudetter_identifier(creds.get("identifier"))
+    if not identifier:
+        raise AuthError("Yudetterのメールアドレスまたはユーザー名を入力してください。", 400,
+                        "missing_identifier")
     jar = http.cookiejar.CookieJar()
-    status, data, _h, _t = _request(
-        "POST", YUDETTER_HOST + "/api/auth/sign-in/email",
-        {"email": creds["identifier"], "password": creds["password"]},
-        {"Origin": YUDETTER_HOST, "Referer": YUDETTER_HOST + "/"},
-        cookie_jar=jar,
-    )
+    hdrs = {"Origin": YUDETTER_HOST, "Referer": YUDETTER_HOST + "/sign-in"}
+    if kind == "username":
+        # ユーザー名でのログインは専用のエンドポイント（本家のログイン画面と同じ）
+        status, data, _h, _t = _request(
+            "POST", YUDETTER_HOST + "/api/users/sign-in-by-username",
+            {"username": identifier, "password": creds["password"]},
+            hdrs, cookie_jar=jar,
+        )
+    else:
+        status, data, _h, _t = _request(
+            "POST", YUDETTER_HOST + "/api/auth/sign-in/email",
+            {"email": identifier, "password": creds["password"]},
+            hdrs, cookie_jar=jar,
+        )
     data = _json(status, data)
     if status == 403 and "アクセス元" in str(data.get("error", "")):
         raise AuthError("Yudetterがこのサーバーからのログインを受け付けませんでした。", 502, "service_blocked")
     if status != 200:
+        code = str(data.get("code") or "")
+        if code == "EMAIL_NOT_VERIFIED":
+            raise AuthError("Yudetterのメールアドレスがまだ認証されていません。Yudetterで確認を済ませてください。",
+                            403, "email_not_verified")
         msg = data.get("message") or data.get("error") or "Yudetterにログインできませんでした。"
         raise AuthError(msg, 401, "invalid_credentials")
     user = data.get("user") or {}
     if not user:
         token = data.get("token")
-        hdrs = {"Origin": YUDETTER_HOST, "Referer": YUDETTER_HOST + "/"}
+        hdrs_me = {"Origin": YUDETTER_HOST, "Referer": YUDETTER_HOST + "/"}
         if token:
-            hdrs["Authorization"] = "Bearer " + token
-        st2, me, _h2, _t2 = _request("GET", YUDETTER_HOST + "/api/users/me", headers=hdrs, cookie_jar=jar)
+            hdrs_me["Authorization"] = "Bearer " + token
+        # better-auth のセッション（Cookie）からユーザーを引く
+        st2, ses, _h2, _t2 = _request("GET", YUDETTER_HOST + "/api/auth/get-session",
+                                     headers=hdrs_me, cookie_jar=jar)
         if st2 == 200:
-            me = _json(st2, me)
-            user = me.get("user") or me
-    handle = user.get("username") or creds["identifier"]
+            ses = _json(st2, ses)
+            user = ses.get("user") or {}
+        if not user:
+            st3, me, _h3, _t3 = _request("GET", YUDETTER_HOST + "/api/users/me",
+                                        headers=hdrs_me, cookie_jar=jar)
+            if st3 == 200:
+                me = _json(st3, me)
+                user = me.get("user") or me
+    handle = user.get("username") or identifier
     ident = _identity(
         "yudetter", handle, user.get("displayName") or handle,
         _avatar(YUDETTER_HOST, user.get("avatarUrl")),
