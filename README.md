@@ -13,12 +13,13 @@ Karotter / Yudetter / あめ→はれ / Pitter / Amiverse のタイムライン�
 |---|---|---|
 | Karotter | `https://karotter.com/brand-assets/logo/karotter-k.png` | ブランドロゴ（`karotter-k.svg` のPNG版・1024px） |
 | Yudetter | `https://yudetter.com/logo.png` | アプリ内ヘッダーのロゴ画像（アプリのロゴそのもの。favicon.png と同一ファイル） |
-| あめ→はれ | `https://am-hr.com/icons/icon-180.png` | `apple-touch-icon`（manifest の `icon-512.png` も同絵柄） |
+| あめ→はれ | `GET /api/service-icon/amehare`（元は `https://am-hr.com/icons/icon-180.png`） | `apple-touch-icon`（manifest の `icon-512.png` も同絵柄）。CORP 制限のためサーバー経由で転送 |
 | Pitter | `https://pitter.jp/system/image/icon.png` | サイトヘッダーのロゴ画像（1000px・透過） |
 | Amiverse | `https://amiverse.net/static-assets/images/amiverse-logo-alpha-400.png` | ブランドロゴ（透過PNG。manifest は `amiverse-logo-400.webp`） |
 
 - 定義は `server.py` の `SERVICES[].iconUrl`（`/api/services`・`/api/timeline` の `services[]` に出る）と、`auth.AUTH_SPECS[].iconUrl`（`/api/auth/status` の `providers` に出る）。フロントは `public/app.js` の `SERVICE_ICONS` を控えに持ち、APIが届かない場面でも表示できる。
-- ダークUIに合わせて 13〜20px の角丸チップ（`#0e0e0e`＋内側1pxリング）に入れ、サービスごとに余白の大きいロゴだけ CSS の `transform: scale()` で拡大している（画像は切らない）。
+- あめ→はれ のアイコンだけは、公式サイトが `Cross-Origin-Resource-Policy: same-origin` を返すため直参照できない。この1件だけ Loomix サーバー経由で転送する（`GET /api/service-icon/amehare`）。サーバーは取得した画像を**ディスクに保存せず**そのまま返し、メモリに24時間だけキャッシュする。任意URLを受け付けないよう、サービスIDから固定URLを引く表（`server.SERVICE_ICON_PROXY`）にあるものだけを転送し、失敗時は `502` を返してフロントのモノグラム表示に任せる。
+- ダークUIに合わせて 13〜20px の角丸チップ（`#0e0e0e`＋内側1pxリング）に入れ、余白の大きいロゴだけ CSS の `transform: scale()` で控えめに調整している（画像は切らない）。Pitter は `1.15`、Amiverse は `1.22`、Yudetter は透過のない正方形ロゴが箱いっぱいに広がらないよう `0.85`。
 - 読み込みに失敗したとき（ホットリンク制限・オフライン等）は、その場でモノグラム（K / Y / 雨 / P / A）に差し替える。
 
 ## v0.6 の変更: ブロック・ミュートの反映

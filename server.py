@@ -85,8 +85,23 @@ REQUEST_BUDGET_SEC = 20.0   # /api/timeline 1回の応答で外部APIを待つ�
 MAX_ROUNDS = 8              # 1回の応答でアーカイブを伸ばすラウンド数
 ARCHIVE_CAP = 6000          # 1サービスあたりの保持上限（メモリ保護）
 
+# ---------------------------------------------------------------- アイコン
+
+# あめ→はれ のアイコンは `Cross-Origin-Resource-Policy: same-origin` を返すため、
+# ブラウザからは直参照できない。そこで固定URLぶんだけをサーバー経由で転送する
+# （ディスクには保存せず、メモリ上の短時間キャッシュのみ）。
+# 任意のURLを受け付けるオープンプロキシにしないため、ID→URL の固定表だけを許可する。
+SERVICE_ICON_PROXY = {
+    "amehare": "https://am-hr.com/icons/icon-180.png",
+}
+ICON_PROXY_PREFIX = "/api/service-icon/"
+ICON_CACHE_SEC = 86400
+_ICON_CACHE = {}            # service_id -> (expires_at, content_type, body)
+_ICON_LOCK = threading.Lock()
+
 # 各SNSのアイコン。ダウンロードせず、公式サイト上の画像URLをそのまま参照する
 # （favicon ではなく、ブランドロゴ・アプリアイコン・manifest内アイコンを選定）。
+# 直参照を拒むサービスだけ、上のプロキシ経由のパスを iconUrl にする。
 SERVICES = [
     {"id": "karotter", "name": "Karotter", "label": "karotter", "url": "https://karotter.com",
      "iconUrl": "https://karotter.com/brand-assets/logo/karotter-k.png",
@@ -95,7 +110,8 @@ SERVICES = [
      "iconUrl": "https://yudetter.com/logo.png",
      "iconKind": "app-logo"},
     {"id": "amehare", "name": "あめ→はれ", "label": "am-hr", "url": "https://am-hr.com",
-     "iconUrl": "https://am-hr.com/icons/icon-180.png",
+     "iconUrl": ICON_PROXY_PREFIX + "amehare",
+     "iconSource": SERVICE_ICON_PROXY["amehare"],
      "iconKind": "apple-touch-icon"},
     {"id": "pitter", "name": "Pitter", "label": "pitter", "url": "https://pitter.jp",
      "iconUrl": "https://pitter.jp/system/image/icon.png",
@@ -149,6 +165,42 @@ def browser_headers(extra=None):
 
 class FetchError(Exception):
     pass
+
+
+def service_icon(service_id, force=False):
+    """固定URLのアイコンを取得して (content_type, bytes) を返す。
+
+    * 引数はサービスIDのみ（URLは受け付けない）のでオープンプロキシにならない
+    * ディスクには一切書かない。メモリキャッシュは ICON_CACHE_SEC だけ
+    """
+    sid = str(service_id or "")
+    url = SERVICE_ICON_PROXY.get(sid)
+    if not url:
+        raise KeyError(sid)
+
+    now = time.time()
+    if not force:
+        with _ICON_LOCK:
+            hit = _ICON_CACHE.get(sid)
+        if hit and hit[0] > now:
+            return hit[1], hit[2]
+
+    req = urllib.request.Request(
+        url, headers=browser_headers({"Accept": "image/png,image/*;q=0.8,*/*;q=0.5"}))
+    try:
+        with urllib.request.urlopen(req, context=SSL_CTX, timeout=10) as resp:
+            ctype = (resp.headers.get("Content-Type") or "image/png").split(";")[0].strip().lower()
+            body = resp.read(4 * 1024 * 1024 + 1)
+    except Exception as e:  # noqa: BLE001 - ネットワークは何でも起きる
+        raise FetchError(str(e))
+    if not ctype.startswith("image/"):
+        ctype = "image/png"
+    if not body or len(body) > 4 * 1024 * 1024:
+        raise FetchError("unexpected icon body")
+
+    with _ICON_LOCK:
+        _ICON_CACHE[sid] = (now + ICON_CACHE_SEC, ctype, body)
+    return ctype, body
 
 
 def fetch_json(url, headers=None, timeout=12, retries=1):
@@ -1652,8 +1704,34 @@ class LoomixHandler(SimpleHTTPRequestHandler):
                 extra_headers.append(("Set-Cookie", "loomix_session=; Path=/; Max-Age=0; SameSite=Lax; Secure"))
         self._send_json(obj, status=status, cache_control=cache_control, extra_headers=extra_headers)
 
+    def _serve_service_icon(self, path):
+        """固定URLのアイコンをそのまま転送する（JSONではなく画像バイト列）。"""
+        self._static_cache = None
+        sid = path[len(ICON_PROXY_PREFIX):].strip("/")
+        if sid not in SERVICE_ICON_PROXY:
+            return self._send_json({"ok": False, "error": "not found"}, status=404,
+                                   cache_control="no-store")
+        try:
+            ctype, body = service_icon(sid)
+        except Exception as e:  # noqa: BLE001 - 失敗時はフロントのモノグラムに任せる
+            logging.warning("service icon %s unavailable: %s", sid, e)
+            return self._send_json({"ok": False, "error": "アイコンを取得できませんでした"},
+                                   status=502, cache_control="no-store")
+        self.send_response(200)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "public, max-age=%d" % ICON_CACHE_SEC)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.end_headers()
+        if self.command != "HEAD":
+            self.wfile.write(body)
+
     def do_GET(self):
-        if urlparse(self.path).path.startswith("/api/"):
+        path = urlparse(self.path).path
+        if path.startswith(ICON_PROXY_PREFIX):
+            return self._serve_service_icon(path)
+        if path.startswith("/api/"):
             return self._dispatch("GET")
         # 静的ファイルは毎回再検証させる（デプロイ直後の古いCSS/JSを避ける）
         self._static_cache = "no-cache, must-revalidate"

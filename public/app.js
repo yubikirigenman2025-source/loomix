@@ -17,12 +17,14 @@ const ROUTES = {
 
 // 各SNSのアイコンは公式サイト上の画像をそのまま参照する（ダウンロード・保存はしない）。
 // favicon ではなく、ブランドロゴ・アプリアイコン・manifest内アイコンを使う。
+// あめ→はれ だけは公式サイトが `Cross-Origin-Resource-Policy: same-origin` を返して
+// 直参照できないので、Loomix サーバー経由の転送（保存なし）を指す。
 // サーバー（/api/auth/status の providers、/api/timeline の services）が iconUrl を返すが、
 // それが届かない場面でも表示できるよう控えを持つ。
 const SERVICE_ICONS = {
   karotter: "https://karotter.com/brand-assets/logo/karotter-k.png",
   yudetter: "https://yudetter.com/logo.png",
-  amehare: "https://am-hr.com/icons/icon-180.png",
+  amehare: "/api/service-icon/amehare",
   pitter: "https://pitter.jp/system/image/icon.png",
   amiverse: "https://amiverse.net/static-assets/images/amiverse-logo-alpha-400.png",
 };

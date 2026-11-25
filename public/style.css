@@ -352,10 +352,11 @@ a { color: inherit; }
   display: block;
 }
 
-/* 余白の大きいロゴは箱いっぱいに見えるよう拡大する（画像自体は切らない） */
-.svc-ico[data-s="pitter"] .svc-ico-img { transform: scale(1.55); }
+/* 余白の大きいロゴは箱とのバランスを見て控えめに拡大する（画像自体は切らない）。
+   Yudetter は透過のない正方形ロゴなので、箱いっぱいに広がらないよう少し縮める。 */
+.svc-ico[data-s="pitter"] .svc-ico-img { transform: scale(1.15); }
 .svc-ico[data-s="amiverse"] .svc-ico-img { transform: scale(1.22); }
-.svc-ico[data-s="yudetter"] .svc-ico-img { transform: scale(2); }
+.svc-ico[data-s="yudetter"] .svc-ico-img { transform: scale(0.85); }
 
 .svc-ico-lg {
   --ico: 20px;
