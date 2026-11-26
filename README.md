@@ -22,6 +22,28 @@ Karotter / Yudetter / あめ→はれ / Pitter / Amiverse のタイムライン�
 - ダークUIに合わせて 13〜20px の角丸チップ（`#0e0e0e`＋内側1pxリング）に入れ、余白の大きいロゴだけ CSS の `transform: scale()` で控えめに調整している（画像は切らない）。Pitter は `1.15`、Amiverse は `1.22`、Yudetter は透過のない正方形ロゴが箱いっぱいに広がらないよう `0.85`。
 - 読み込みに失敗したとき（ホットリンク制限・オフライン等）は、その場でモノグラム（K / Y / 雨 / P / A）に差し替える。
 
+## v0.7 の変更: 統合通知
+
+連携している全SNSの「自分宛ての通知」を1つの一覧にまとめる（`notify.py` / `GET /api/notifications`）。サイドバー（モバイルは下部ナビ）に「通知」タブ（`#/notifications`）を追加した。
+
+### サービス別の対応状況（2026-11-27 実測＋クライアント解析）
+
+| サービス | 通知 | 取得方法 | 既読 |
+|---|---|---|---|
+| Karotter | ○ | `GET {api}/notifications?page=1&limit=40`＋`Authorization: Bearer`。応答 `{notifications:[{id,type,isRead,createdAt,actor(s),post(s),notificationIds}]}`。type は LIKE/REKAROT/REPLY/MENTION/FOLLOW/FOLLOW_REQUEST/FOLLOWED_POST/REACTION/QUOTE/DM など | `isRead` |
+| Yudetter | ○ | `GET /api/notifications?limit=40`（Cookie か Bearer）→ `{items:[{id,type,read,createdAt,actor,yudate}]}`。type は like/reyudate/reply/quote/mention/follow/reaction:絵文字/super_yudate:額/market_*/badge_application_* など | `read` |
+| あめ→はれ | ○ | `GET /api/notifications?limit=40&bucket=main` と `bucket=sub` の両方（`x-amehare-session-token`＋Cookie＋`Origin: https://am-hr.com`）→ `{notifications:[{id,seq,type,actor,reactionType,post,replyPost,createdAt}]}`。type は reply/repost/reaction（お花・お茶）/report | 項目単位では返らない |
+| Pitter | ○ | 公式 openAPI `POST /system/openAPI.php?action=notifications`（Bearer）。`{data:{notifications:[{type,actor_handle,actor_name,post_id,post_content,is_read,created_at}]}}` を寛容に解釈 | `is_read` |
+| Amiverse | × | `POST /v1/notifications` はサインイン済みセッションが必要（未サインインは 401）。Loomix の連携はID入力のみで認証が無いため取得できない | − |
+
+### 仕組み
+
+- **通知は共有アーカイブに入れない。** タイムラインの `.cache/*.jsonl` は誰でも読める公開データだが、通知は本人だけのもの。リクエストのたびにその場で取得して返し、応答は `no-store`。ユーザーごとのメモリキャッシュは30秒だけ。
+- **取得はログイン時のセッション材料を借りる。** `safety.py` がログイン時にメモリへ置いた Bearer / Cookie を `safety.materials()` で受け取る（ディスクには書かない）。使われている間は寿命を延ばし、Loomix の再起動・ログアウト・保持時間切れで消える。その場合は `needs_relink` を返し、画面に「設定 → 連携アカウント → 連携し直す」の導線を出す。パスワードは受け取らない。
+- **既読にする書き込みはしない。** 本家の未読状態は変えず、各SNSが返した `isRead` を表示するだけ（あめ→はれは項目単位の既読を返さないため未読ドットは出ない）。
+- **ブロック・ミュートは通知にも効く。** `safety.Hider` を再利用し、ブロック・ミュートした相手からの通知は隠す（本家の設定は変更しない）。
+- 通知の無いサービスは `status: unlinked`、取得できたものは `ok` / 一部だけなら `partial`、期限切れは `needs_relink`、Amiverse は `unavailable`。画面はこれらを1行の控えめな注記にまとめ、直せるものだけ「設定で連携し直す」を添える。
+
 ## v0.6 の変更: ブロック・ミュートの反映
 
 連携している各SNSの「ブロック」「ミュート」「ミュートワード」を、Loomix のタイムラインに反映する（`safety.py`）。ブロック・ミュートした相手の投稿は表示せず、ミュートワードに一致する他人の投稿も隠す。本家の設定は変更しない（読み取りのみ）。
@@ -118,9 +140,46 @@ PORT=3000 python3 server.py
 
 依存パッケージなし（Python 3.8+ 標準ライブラリのみ）。Docker（`Dockerfile`）と Vercel（`vercel.json` / `api/index.py`）にも対応。
 
-## API
+### `GET /api/notifications`
 
-### `GET /api/timeline`
+| パラメータ | 内容 |
+|---|---|
+| `refresh` | `1` で30秒のメモリキャッシュを無視して取り直す |
+
+```json
+{
+  "ok": true,
+  "fetchedAt": "2026-11-27T07:42:00.000Z",
+  "count": 12,
+  "unread": 4,
+  "hidden": 0,
+  "linked": ["karotter", "yudetter", "amehare", "pitter", "amiverse"],
+  "services": {
+    "karotter": { "status": "ok", "error": null, "count": 4, "fetchedAt": "…" },
+    "amiverse": { "status": "unavailable", "error": "AmiverseはLoomixからの認証に対応していないため、通知を取得できません。", "count": 0 }
+  },
+  "items": [
+    {
+      "id": "karotter:900",
+      "service": "karotter",
+      "serviceName": "Karotter",
+      "serviceLabel": "karotter",
+      "type": "like",
+      "label": "いいね",
+      "message": "あなたの投稿にいいねしました",
+      "actor": { "name": "きさな", "handle": "kisana_me", "avatar": "", "url": "https://karotter.com/kisana_me" },
+      "createdAt": "2026-11-27T01:02:03Z",
+      "excerpt": "対象投稿の抜粋",
+      "url": "https://karotter.com/posts/2118044",
+      "isRead": false
+    }
+  ]
+}
+```
+
+`type` は `like` / `repost` / `reply` / `mention` / `follow` / `other` の6種に正規化し、先方の細かい種別（リカロート・お茶・投げ銭・スーパーユデートなど）は `label` と `message` に残す。連携が無いときは `authenticated: false` を返す。
+
+## API（タイムライン）
 
 | パラメータ | 内容 |
 |---|---|
@@ -220,6 +279,8 @@ work/loomix/
 ├── server.py           # BFF（Python標準ライブラリ）
 ├── auth.py             # 各SNSのログイン検証とLoomixセッション
 ├── safety.py           # ブロック・ミュートの取得とタイムラインへの反映
+├── notify.py           # 各SNSの通知の取得・正規化・統合
+├── test_notify.py      # 上記のオフライン検証（python3 test_notify.py）
 ├── test_safety.py      # 上記のオフライン検証（python3 test_safety.py）
 ├── public/             # index.html / style.css / app.js
 ├── api/index.py        # Vercel 用エントリ（server.py を共有）
@@ -242,3 +303,6 @@ work/loomix/
 - ログイン試行は同一IPあたり5分で15回までに制限している（`X-Forwarded-For` の先頭を使用）。
 - ブロック・ミュートの反映は、各SNSの内部APIが返す一覧に依存する。Yudetter の `/api/users/me/blocks` は応答の形が未実測のため寛容に解釈しており、形が変われば `/api/safety` の `status` が `error`/0件になる。Pitter・Amiverse は上表のとおり取得できない（本家では非表示でもLoomixには出る）。
 - リポスト／引用は「投稿した人」で判定する。引用元の作者だけをブロックしている場合、Loomix は引用カードを別に描かないので追加の間引きはしていない。
+- 通知の取得は各SNSの非公開APIに依存する。Karotter の一覧は `type`/`actor`/`post`/`createdAt` をクライアント解析から確認しているが、実アカウントでの応答は未検証（未認証が401であることだけ実測）。形が違えば `/api/notifications` の `services.karotter.status` が `error` になる。
+- 通知の取得材料はメモリのみ（最終利用から24時間）。Render の無料プランは再起動・再デプロイで消えるため、その直後は「連携し直す」が必要になる。
+- あめ→はれは項目単位の既読を返さないため、一覧に未読ドットが出ない（本家も既読は `beforeSeq` の位置で管理している）。

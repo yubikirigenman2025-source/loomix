@@ -13,6 +13,9 @@ Loomix ブロック・ミュート反映 (v0.6)
   - 更新に使う各SNSのセッション(Bearer/Cookie)はメモリだけに置き、ディスクへは
     書かない。Render の再起動で消えた場合は、最後に取れたリストのまま動く
     （フィルタは効き続ける／更新だけが次のログインまで止まる）。
+  - この材料は統合通知(notify.py)も借りる。同じセッションを二重に持たないよう
+    置き場所はここ1か所にする。使われている間は寿命を延ばす。ディスクには
+    決して書かない。
   - サービス側のAPI仕様上どうしても取れないものは、status と error に理由を残す。
 
 各サービスの取得方法（2026-11-14 実測・クライアント解析）:
@@ -56,7 +59,10 @@ PITTER_HOST = "https://pitter.jp"
 AMIVERSE_HOST = "https://amiverse.net"
 
 SAFETY_TTL = 600            # これより古いリストは裏で更新する（秒）
-MATERIAL_TTL = 60 * 60 * 6  # セッション材料をメモリに置いておく時間
+# セッション材料をメモリに置いておく時間。通知は毎日開くものなので、6時間だと
+# 翌朝には必ず「連携し直し」になってしまう。ディスクには書かず、プロセスの
+# 再起動・ログアウト・401/403で消えるので、メモリ上は24時間までとする。
+MATERIAL_TTL = 60 * 60 * 24
 FETCH_TIMEOUT = 8
 
 _CACHE_DIR = None
@@ -454,6 +460,41 @@ def drop(key, service):
         mat = _material.get(key)
         if mat:
             mat.pop(service, None)
+
+
+def materials(key):
+    """そのユーザーの、メモリ上のセッション材料（コピー）を返す。
+
+    notify.py が通知の取得に使う。期限切れのものは返さない。
+    """
+    if not key:
+        return {}
+    now = time.time()
+    out = {}
+    with _lock:
+        for sid, ent in (_material.get(key) or {}).items():
+            if not isinstance(ent, dict):
+                continue
+            if float(ent.get("expires") or 0) <= now:
+                continue
+            data = ent.get("data")
+            if isinstance(data, dict) and data:
+                out[sid] = dict(data)
+    return out
+
+
+def touch_material(key, service=None):
+    """使われたセッション材料の寿命を延ばす（メモリ上だけ）。"""
+    if not key:
+        return
+    now = time.time()
+    with _lock:
+        mats = _material.get(key) or {}
+        for sid, ent in mats.items():
+            if service and sid != service:
+                continue
+            if isinstance(ent, dict):
+                ent["expires"] = now + MATERIAL_TTL
 
 
 def forget(key):

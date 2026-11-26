@@ -6,7 +6,7 @@
 <meta name="theme-color" content="#000000">
 <meta name="description" content="Karotter / Yudetter / あめ→はれ / Pitter / Amiverse のタイムラインをひとつの流れに。">
 <title>Loomix</title>
-<link rel="stylesheet" href="style.css?v=063">
+<link rel="stylesheet" href="style.css?v=070">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' fill='%23000'/%3E%3Cpath d='M14 20h36M14 32h36M14 44h36' stroke='%23bbb' stroke-width='2'/%3E%3C/svg%3E">
 </head>
 <body>
@@ -53,12 +53,16 @@
   <aside class="sidebar">
     <a class="side-brand" href="#/home">
       <span class="brand-name">Loomix</span>
-      <span class="brand-ver">0.5</span>
+      <span class="brand-ver">0.7</span>
     </a>
     <nav class="side-nav" aria-label="メイン">
       <a class="nav-item" href="#/home" data-route="home">
         <svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M4 10.6 12 4l8 6.6V20a1 1 0 0 1-1 1h-4.5v-6h-5v6H5a1 1 0 0 1-1-1z"/></svg>
         <span>ホーム</span>
+      </a>
+      <a class="nav-item" href="#/notifications" data-route="notifications">
+        <svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M6.4 10a5.6 5.6 0 0 1 11.2 0c0 3.2.6 4.7 1.4 5.7.3.4 0 .9-.5.9H5.5c-.5 0-.8-.5-.5-.9.8-1 1.4-2.5 1.4-5.7z"/><path d="M9.7 19.3a2.5 2.5 0 0 0 4.6 0"/></svg>
+        <span>通知</span>
       </a>
       <a class="nav-item" href="#/profile" data-route="profile">
         <svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="8.5" r="3.6"/><path d="M4.5 20c1.3-3.7 4-5.6 7.5-5.6s6.2 1.9 7.5 5.6"/></svg>
@@ -106,6 +110,7 @@
       <div class="empty" id="empty" hidden>該当する投稿がありません</div>
     </section>
 
+    <section class="view" id="view-notif" hidden></section>
     <section class="view" id="view-profile" hidden></section>
     <section class="view" id="view-settings" hidden></section>
 
@@ -115,6 +120,10 @@
     <a href="#/home" data-route="home">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M4 10.6 12 4l8 6.6V20a1 1 0 0 1-1 1h-4.5v-6h-5v6H5a1 1 0 0 1-1-1z"/></svg>
       <span>ホーム</span>
+    </a>
+    <a href="#/notifications" data-route="notifications">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M6.4 10a5.6 5.6 0 0 1 11.2 0c0 3.2.6 4.7 1.4 5.7.3.4 0 .9-.5.9H5.5c-.5 0-.8-.5-.5-.9.8-1 1.4-2.5 1.4-5.7z"/><path d="M9.7 19.3a2.5 2.5 0 0 0 4.6 0"/></svg>
+      <span>通知</span>
     </a>
     <a href="#/profile" data-route="profile">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="8.5" r="3.6"/><path d="M4.5 20c1.3-3.7 4-5.6 7.5-5.6s6.2 1.9 7.5 5.6"/></svg>
@@ -153,6 +162,6 @@
 
 <div class="toast" id="toast" hidden></div>
 
-<script src="app.js?v=063"></script>
+<script src="app.js?v=070"></script>
 </body>
 </html>

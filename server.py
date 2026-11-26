@@ -20,9 +20,15 @@ v0.4:
     POST /api/auth/login, GET /api/auth/status, POST /api/auth/unlink, POST /api/auth/logout
   - Loomix セッションは HMAC 署名トークン。パスワードは保存しない
   - 未連携・連携不足では /api/timeline と /api/user が 401 auth_required を返す
+
+v0.7:
+  - 連携している全SNSの通知を1つにまとめる（notify.py）。GET /api/notifications
+    取得はログイン時のセッション材料（メモリのみ）で行い、共有アーカイブには保存しない。
+    既読にする書き込みはせず、表示だけ。
 """
 
 import auth
+import notify
 import safety
 
 import collections
@@ -46,7 +52,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 
 PORT = int(os.environ.get("PORT", 8080))
 PUBLIC_DIR = os.path.join(os.path.dirname(__file__), "public")
-VERSION = "0.6"
+VERSION = "0.7"
 
 SSL_CTX = ssl.create_default_context()
 
@@ -1567,6 +1573,20 @@ def api_dispatch(method, path, query, body, headers, client_ip=""):
         if not s_key:
             return 200, {"ok": True, "active": False, "services": {}, "canRefresh": False}, "no-store"
         return 200, safety.summary(s_key), "no-store"
+
+    if path == "/api/notifications":
+        # 連携先の通知は本人しか見られない。応答は毎回その場で作り、保存しない。
+        if not s_key:
+            return 200, {"ok": True, "authenticated": False, "items": [], "services": {},
+                         "linked": [], "count": 0, "unread": 0, "hidden": 0,
+                         "fetchedAt": iso_z(datetime.now(timezone.utc))}, "no-store"
+        force = qget("refresh", "0") not in ("", "0", "false")
+        try:
+            payload = notify.list_notifications(s_key, linked_services, force=force)
+        except Exception as e:  # noqa: BLE001
+            logging.exception("notifications failed")
+            return 502, {"ok": False, "error": "通知を取得できませんでした: %s" % e}, "no-store"
+        return 200, payload, "no-store"
 
     if path == "/api/safety/refresh":
         if method != "POST":

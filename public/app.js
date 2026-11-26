@@ -11,6 +11,7 @@ const TOKEN_KEY = "loomix.session";
 
 const ROUTES = {
   home: "ホーム",
+  notifications: "通知",
   profile: "プロフィール",
   settings: "設定",
 };
@@ -78,6 +79,7 @@ const sideUser = document.getElementById("sideUser");
 const topTitle = document.getElementById("topTitle");
 const topTools = document.getElementById("topTools");
 const viewHome = document.getElementById("view-home");
+const viewNotif = document.getElementById("view-notif");
 const viewProfile = document.getElementById("view-profile");
 const viewSettings = document.getElementById("view-settings");
 
@@ -518,6 +520,7 @@ async function submitLink(form) {
 
     if (inApp) {
       renderSideUser();
+      invalidateNotifications();
       if (state.route === "settings") renderSettings();
       if (state.route === "profile") renderProfilePage();
     } else {
@@ -546,6 +549,7 @@ async function unlink(service) {
     state.auth = data.auth;
     if (data.token !== undefined) setToken(data.token);
     renderSideUser();
+    invalidateNotifications();
     if (state.route === "settings") renderSettings();
     if (state.route === "profile") renderProfilePage();
     toast(`${providerName(service)}の連携を解除しました`);
@@ -568,6 +572,7 @@ async function relink(service) {
     state.auth = data.auth;
     if (data.token !== undefined) setToken(data.token);
     renderSideUser();
+    invalidateNotifications();
     renderSettings();
     const card = document.querySelector(`.link-card[data-service="${service}"]`);
     if (card) {
@@ -593,6 +598,7 @@ async function logout() {
     state.auth = null;
   }
   setToken("");
+  invalidateNotifications();
   if (!state.auth) {
     try { await loadStatus(); } catch (err) { state.auth = null; }
   }
@@ -709,7 +715,7 @@ function route() {
   gateEl.hidden = true;
   appEl.hidden = false;
 
-  const views = { home: viewHome, profile: viewProfile, settings: viewSettings };
+  const views = { home: viewHome, notifications: viewNotif, profile: viewProfile, settings: viewSettings };
   Object.keys(views).forEach((key) => {
     if (views[key]) views[key].hidden = key !== name;
   });
@@ -723,6 +729,7 @@ function route() {
 
   if (name === "profile") renderProfilePage();
   if (name === "settings") renderSettings();
+  if (name === "notifications") loadNotifications();
   if (name === "home") {
     renderPreviewBanner();
     if (!state.posts.length && !state.loadingFirst) loadFirstPage();
@@ -837,7 +844,7 @@ function renderSettings() {
     <div class="page-body">
       <div class="set-group">
         <h3 class="set-section-title">連携アカウント（${linked} / ${total}）</h3>
-        <p class="set-section-desc">連携したSNSの投稿だけがタイムラインに流れます。未連携のSNSの投稿は表示されません。パスワードは保存されません。</p>
+        <p class="set-section-desc">連携したSNSの投稿だけがタイムラインに流れ、通知もここからまとめて表示されます。Loomixはセッションを保存しないため、再起動のあとは「連携し直す」で通知を取り直してください。パスワードは保存されません。</p>
         <div class="link-list" style="margin-top:16px">${providers.map((s) => linkCard(s, true)).join("")}</div>
       </div>
 
@@ -882,7 +889,7 @@ function renderSettings() {
       </div>` : ""}
 
       <p class="set-note">
-        Loomix 0.6 ・ パスワードは保存していません。連携を解除するとLoomix側の記録も消えます。<br>
+        Loomix 0.7 ・ パスワードは保存していません。連携を解除するとLoomix側の記録も消えます。<br>
         <a href="https://github.com/yubikirigenman2025-source/loomix" target="_blank" rel="noopener noreferrer">リポジトリ</a>
       </p>
     </div>
@@ -993,6 +1000,184 @@ function reloadTimelineSoft() {
   state.nextAllowedAt = 0;
   feedEl.innerHTML = "";
   if (state.route === "home") loadFirstPage({ force: true }).catch(() => {});
+}
+
+/* ------------------------------------------------------------ notifications */
+
+// 連携している全SNSの通知。サーバー（/api/notifications）が共通の形に整えて返す。
+const notifState = {
+  items: [],
+  services: {},
+  linked: [],
+  count: 0,
+  unread: 0,
+  hidden: 0,
+  fetchedAt: null,
+  loaded: false,
+  loading: false,
+  error: "",
+};
+
+const NOTIF_GLYPH = {
+  like: '<path d="M12 19.2s-6.3-3.8-6.3-8A3.6 3.6 0 0 1 12 8.4a3.6 3.6 0 0 1 6.3 2.8c0 4.2-6.3 8-6.3 8z"/>',
+  repost: '<path d="M7 7.4h8.4A2.4 2.4 0 0 1 17.8 9.8v4.8M17 16.6H8.6a2.4 2.4 0 0 1-2.4-2.4V9.4"/><path d="m14.8 4.6 2.7 2.8-2.7 2.8M9.2 19.4l-2.7-2.8 2.7-2.8"/>',
+  reply: '<path d="M19.6 12.4c0 3.2-3.4 5.8-7.6 5.8-.9 0-1.9-.1-2.7-.4L5.2 19.6l1.1-3.2c-.8-.9-1.3-2-1.3-3.2C5 10 8.4 7.4 12.6 7.4s7 2.6 7 5z"/>',
+  mention: '<circle cx="12" cy="12" r="3.4"/><path d="M15.4 12v1.5a2.5 2.5 0 0 0 5 0V12a8.4 8.4 0 1 0-3.2 6.7"/>',
+  follow: '<circle cx="10" cy="8.6" r="3.2"/><path d="M4.2 19.2c1.1-3 3.2-4.5 5.8-4.5 1.1 0 2.2.3 3.1.8M17.4 14.6v4.8M15 17h4.8"/>',
+  other: '<path d="M6.4 10a5.6 5.6 0 0 1 11.2 0c0 3.2.6 4.7 1.4 5.7.3.4 0 .9-.5.9H5.5c-.5 0-.8-.5-.5-.9.8-1 1.4-2.5 1.4-5.7z"/><path d="M9.7 19.3a2.5 2.5 0 0 0 4.6 0"/>',
+};
+
+function notifGlyph(type) {
+  const body = NOTIF_GLYPH[type] || NOTIF_GLYPH.other;
+  return `<svg class="ntype" viewBox="0 0 24 24" fill="none" stroke="currentColor" ` +
+    `stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${body}</svg>`;
+}
+
+function invalidateNotifications() {
+  notifState.items = [];
+  notifState.services = {};
+  notifState.linked = [];
+  notifState.count = 0;
+  notifState.unread = 0;
+  notifState.hidden = 0;
+  notifState.fetchedAt = null;
+  notifState.loaded = false;
+  notifState.error = "";
+  if (viewNotif) viewNotif.innerHTML = "";
+}
+
+function notifServiceName(sid) {
+  return providerName(sid) || sid;
+}
+
+function notifRow(n) {
+  const a = n.actor || {};
+  // 相手のいないシステム通知（制限・投票終了など）は、そのSNSのアイコンを出す
+  const avatar = (!a.name && !a.handle)
+    ? svcIcon(n.service, "svc-ico-lg")
+    : (a.avatar
+      ? `<img class="avatar" src="${esc(a.avatar)}" alt="" loading="lazy" referrerpolicy="no-referrer">`
+      : `<span class="avatar-fallback">${esc((a.name || a.handle || "?").trim().slice(0, 1))}</span>`);
+  const handle = a.handle ? `<span class="handle">@${esc(a.handle)}</span>` : "";
+  const time = n.createdAt
+    ? `<a class="time" href="${esc(n.url)}" target="_blank" rel="noopener noreferrer" title="${esc(fullTime(n.createdAt))}">${esc(timeLabel(n.createdAt))}</a>`
+    : "";
+  const unread = n.isRead === false ? `<span class="notif-dot" aria-label="未読"></span>` : "";
+  const excerpt = n.excerpt ? `<div class="notif-excerpt">${esc(n.excerpt)}</div>` : "";
+  return `<article class="notif${n.isRead === false ? " is-unread" : ""}" data-url="${esc(n.url)}" data-service="${esc(n.service)}" title="${esc(n.label || "")}">
+    <div>${avatar}</div>
+    <div class="notif-body">
+      <div class="notif-meta">
+        ${a.name ? `<span class="notif-name">${esc(a.name)}</span>` : ""}
+        ${handle}
+        ${svcChip(n.service, n.serviceLabel || n.serviceName || "")}
+        ${time}
+        ${unread}
+      </div>
+      <div class="notif-msg">${notifGlyph(n.type)}<span>${esc(n.message)}</span></div>
+      ${excerpt}
+    </div>
+  </article>`;
+}
+
+function notifNotes(services) {
+  const relink = [], unavailable = [], failed = [];
+  Object.keys(services || {}).forEach((sid) => {
+    const s = services[sid] || {};
+    if (s.status === "needs_relink") relink.push(notifServiceName(sid));
+    else if (s.status === "unavailable") unavailable.push(notifServiceName(sid));
+    else if (s.status === "error") failed.push(notifServiceName(sid));
+  });
+  const parts = [];
+  if (relink.length) parts.push(`${relink.join("・")}は連携し直すと通知が表示されます`);
+  if (failed.length) parts.push(`${failed.join("・")}を取得できませんでした`);
+  if (unavailable.length) parts.push(`${unavailable.join("・")}は通知の取得に対応していません`);
+  if (!parts.length) return "";
+  // 運営側の仕様で取れないSNSは、連携し直しても変わらないので導線を出さない
+  const link = (relink.length || failed.length)
+    ? `<a href="#/settings">設定で連携し直す</a>` : "";
+  return `<div class="notif-status">${esc(parts.join("。"))}。${link}</div>`;
+}
+
+function renderNotifications() {
+  if (!viewNotif) return;
+  if (!notifState.loaded && notifState.loading) {
+    viewNotif.innerHTML = `<p class="notif-empty">読み込み中…</p>`;
+    return;
+  }
+  if (notifState.error) {
+    viewNotif.innerHTML = `<div class="notif-empty">${esc(notifState.error)}
+      <button class="notif-retry" id="notifRetry" type="button">再読み込み</button></div>`;
+    return;
+  }
+
+  const time = notifState.fetchedAt
+    ? new Date(notifState.fetchedAt).toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" })
+    : "--:--";
+  const summary = [
+    notifState.count ? `${num(notifState.count)}件` : "通知はありません",
+    notifState.hidden ? `非表示 ${num(notifState.hidden)}件` : "",
+    `${time} 取得`,
+  ].filter(Boolean).join(" ・ ");
+
+  const bar = `<div class="notif-bar">
+      <span>${esc(summary)}</span>
+      <button id="notifRefresh" type="button">更新</button>
+    </div>`;
+
+  let body;
+  if (notifState.items.length) {
+    body = notifState.items.map(notifRow).join("");
+  } else if (!notifState.linked.length) {
+    body = `<p class="notif-empty">「設定」からSNSを連携すると、ここに通知がまとまります</p>`;
+  } else {
+    body = `<p class="notif-empty">新しい通知はありません</p>`;
+  }
+
+  viewNotif.innerHTML = bar + notifNotes(notifState.services) + body;
+}
+
+async function loadNotifications({ force = false } = {}) {
+  if (!state.auth) return;
+  if (notifState.loading) return;
+  notifState.loading = true;
+  if (!notifState.loaded) renderNotifications();
+  const btn = document.getElementById("notifRefresh");
+  if (btn) { btn.disabled = true; btn.textContent = "更新中…"; }
+  try {
+    const data = await apiFetch(`/api/notifications${force ? "?refresh=1" : ""}`);
+    notifState.items = data.items || [];
+    notifState.services = data.services || {};
+    notifState.linked = data.linked || [];
+    notifState.count = Number(data.count || 0);
+    notifState.unread = Number(data.unread || 0);
+    notifState.hidden = Number(data.hidden || 0);
+    notifState.fetchedAt = data.fetchedAt || null;
+    notifState.error = "";
+    notifState.loaded = true;
+  } catch (err) {
+    if (err.message === "auth_required") return;
+    notifState.error = "通知を取得できませんでした";
+    console.error("notifications", err);
+  } finally {
+    notifState.loading = false;
+    if (state.route === "notifications") renderNotifications();
+  }
+}
+
+if (viewNotif) {
+  viewNotif.addEventListener("click", (e) => {
+    if (e.target.closest("#notifRefresh") || e.target.closest("#notifRetry")) {
+      loadNotifications({ force: true });
+      return;
+    }
+    if (e.target.closest("a")) return;
+    const row = e.target.closest(".notif");
+    if (row && row.dataset.url) {
+      if (String(window.getSelection && window.getSelection()) !== "") return;
+      window.open(row.dataset.url, "_blank", "noopener");
+    }
+  });
 }
 
 /* ------------------------------------------------------------ post markup */

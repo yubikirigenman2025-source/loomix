@@ -41,7 +41,7 @@ import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 
-VERSION = "0.6"
+VERSION = "0.7"
 
 UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
@@ -746,6 +746,13 @@ def login(payload, token="", client_ip=""):
         logging.warning("safety register failed: %s", e)
         safety_summary = None
 
+    # 連携し直したら、そのユーザーの通知キャッシュは捨てる（新しいセッションで取り直す）
+    try:
+        import notify
+        notify.forget(claims["safetyKey"])
+    except Exception as e:  # noqa: BLE001
+        logging.warning("notification cache clear failed: %s", e)
+
     logging.info("auth linked: service=%s handle=%s", service, identity.get("handle"))
     return {"token": new_token, "service": service, "account": _public_identity(identity),
             "auth": _status_for(claims), "safety": safety_summary}
@@ -784,4 +791,9 @@ def logout(token):
             safety.forget(key)
         except Exception as e:  # noqa: BLE001
             logging.warning("safety forget failed: %s", e)
+        try:
+            import notify
+            notify.forget(key)
+        except Exception as e:  # noqa: BLE001
+            logging.warning("notification cache clear failed: %s", e)
     return {"ok": True}
